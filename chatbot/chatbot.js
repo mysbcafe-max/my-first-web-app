@@ -1,357 +1,535 @@
-// au サービス案内チャットボット
+// au サービス案内チャットボット(フロントエンド)
 //
-// 動作原理:
-// - data/knowledge.js のナレッジベース(KB)をキーワード一致でスコアリングし、
-//   閾値を超えた項目だけを回答に使う(閾値未満 = 根拠なし = 回答しない)
-// - 回答には必ず出典リンクを付ける。出典のない回答は生成されない
-// - 回答ごとに「正確 / 誤り」のフィードバックを収集し localStorage に保存
-// - 管理パネルで正誤を確認し、誤答は「回答停止」で即時に本番回答から除外できる
-//   (恒久的な修正は knowledge.js を直す PR で行う)
+// 回答は2経路あり、上から順に試します:
+//  1. 生成AI(/api/chat)… Cloudflare 上で動作しているとき。言い回しの揺れに強い
+//  2. キーワード検索 … API が使えないとき。ナレッジベースを直接照合する
+//
+// どちらの経路でも「出典必須・根拠がなければ回答しない」は共通です。
+// 生成AI 経路では出典URLをサーバーがナレッジベースから引くため、
+// モデルが出典を作文することはできません。
 
-(function () {
-  "use strict";
+import { AU_KNOWLEDGE } from "./data/knowledge.js";
+import {
+  askAi,
+  sendVerdict,
+  sendUnanswered,
+  fetchAdminData,
+  setEntryDisabled
+} from "./api.js";
 
-  var STORAGE_KEYS = {
-    feedback: "auChatbotFeedback",     // [{time, question, entryId, verdict}]
-    unanswered: "auChatbotUnanswered", // [{time, question}]
-    disabled: "auChatbotDisabled"      // [entryId]
-  };
+const STORAGE_KEYS = {
+  feedback: "auChatbotFeedback",
+  unanswered: "auChatbotUnanswered",
+  disabled: "auChatbotDisabled"
+};
 
-  // スコア閾値: キーワード 1 語一致では回答するが、それ未満(0)は回答しない
-  var SCORE_THRESHOLD = 1;
+// キーワード1語一致で回答する。0語一致(=根拠なし)は回答しない。
+const SCORE_THRESHOLD = 1;
 
-  // ---------- ストレージ ----------
+// サーバーAPI が使えるかどうか。最初の質問時に判明する。
+let serverMode = null;
 
-  function load(key) {
-    try {
-      var raw = localStorage.getItem(key);
-      return raw ? JSON.parse(raw) : [];
-    } catch (e) {
-      return [];
+// ---------- ローカル保存(API が使えないときのフォールバック) ----------
+
+function load(key) {
+  try {
+    const raw = localStorage.getItem(key);
+    return raw ? JSON.parse(raw) : [];
+  } catch (e) {
+    return [];
+  }
+}
+
+function save(key, value) {
+  try {
+    localStorage.setItem(key, JSON.stringify(value));
+  } catch (e) {
+    // プライベートモード等で localStorage が使えない場合は収集を諦め、
+    // チャット機能自体は動かし続ける
+  }
+}
+
+function isDisabledLocally(entryId) {
+  return load(STORAGE_KEYS.disabled).indexOf(entryId) !== -1;
+}
+
+function setDisabledLocally(entryId, disabled) {
+  const list = load(STORAGE_KEYS.disabled).filter(function (id) {
+    return id !== entryId;
+  });
+  if (disabled) list.push(entryId);
+  save(STORAGE_KEYS.disabled, list);
+}
+
+// ---------- キーワード検索(フォールバック経路) ----------
+
+function normalize(text) {
+  return text.normalize("NFKC").toLowerCase().replace(/\s+/g, " ").trim();
+}
+
+function scoreEntry(entry, query) {
+  const q = normalize(query);
+  let score = 0;
+  entry.keywords.forEach(function (kw) {
+    if (q.indexOf(normalize(kw)) !== -1) score += 1;
+  });
+  if (q.indexOf(normalize(entry.title)) !== -1) score += 2;
+  return score;
+}
+
+function findBestEntry(query) {
+  let best = null;
+  let bestScore = 0;
+  AU_KNOWLEDGE.forEach(function (entry) {
+    if (isDisabledLocally(entry.id)) return; // 誤りと判定され停止中の項目は使わない
+    const s = scoreEntry(entry, query);
+    if (s > bestScore) {
+      best = entry;
+      bestScore = s;
     }
+  });
+  return bestScore >= SCORE_THRESHOLD ? best : null;
+}
+
+// ---------- チャット UI ----------
+
+const chatLog = document.getElementById("chat-log");
+const chatForm = document.getElementById("chat-form");
+const chatInput = document.getElementById("chat-input");
+const modeBadge = document.getElementById("mode-badge");
+
+function addMessage(role, node) {
+  const wrap = document.createElement("div");
+  wrap.className = "message message--" + role;
+  wrap.appendChild(node);
+  chatLog.appendChild(wrap);
+  chatLog.scrollTop = chatLog.scrollHeight;
+  return wrap;
+}
+
+function textNode(text) {
+  const p = document.createElement("p");
+  p.textContent = text;
+  return p;
+}
+
+function updateModeBadge() {
+  if (serverMode === null) {
+    modeBadge.textContent = "";
+    return;
   }
+  modeBadge.textContent = serverMode ? "生成AI 回答モード" : "キーワード検索モード";
+  modeBadge.className = "mode-badge " + (serverMode ? "is-ai" : "is-local");
+}
 
-  function save(key, value) {
-    try {
-      localStorage.setItem(key, JSON.stringify(value));
-    } catch (e) {
-      // localStorage が使えない環境(プライベートモード等)では収集をあきらめ、
-      // チャット機能自体は動かし続ける
-    }
-  }
+// 回答表示。ai / local どちらの経路でも同じ形で描画する。
+function buildAnswerNode(result, question) {
+  const box = document.createElement("div");
 
-  function isDisabled(entryId) {
-    return load(STORAGE_KEYS.disabled).indexOf(entryId) !== -1;
-  }
-
-  function setDisabled(entryId, disabled) {
-    var list = load(STORAGE_KEYS.disabled).filter(function (id) {
-      return id !== entryId;
-    });
-    if (disabled) list.push(entryId);
-    save(STORAGE_KEYS.disabled, list);
-  }
-
-  // ---------- 検索(リトリーバル) ----------
-
-  function normalize(text) {
-    return text.normalize("NFKC").toLowerCase().replace(/\s+/g, " ").trim();
-  }
-
-  function scoreEntry(entry, query) {
-    var q = normalize(query);
-    var score = 0;
-    entry.keywords.forEach(function (kw) {
-      if (q.indexOf(normalize(kw)) !== -1) score += 1;
-    });
-    if (q.indexOf(normalize(entry.title)) !== -1) score += 2;
-    return score;
-  }
-
-  function findBestEntry(query) {
-    var best = null;
-    var bestScore = 0;
-    AU_KNOWLEDGE.forEach(function (entry) {
-      if (isDisabled(entry.id)) return; // 誤りと判定され停止中の項目は使わない
-      var s = scoreEntry(entry, query);
-      if (s > bestScore) {
-        best = entry;
-        bestScore = s;
-      }
-    });
-    return bestScore >= SCORE_THRESHOLD ? best : null;
-  }
-
-  // ---------- チャット UI ----------
-
-  var chatLog = document.getElementById("chat-log");
-  var chatForm = document.getElementById("chat-form");
-  var chatInput = document.getElementById("chat-input");
-
-  function addMessage(role, node) {
-    var wrap = document.createElement("div");
-    wrap.className = "message message--" + role;
-    wrap.appendChild(node);
-    chatLog.appendChild(wrap);
-    chatLog.scrollTop = chatLog.scrollHeight;
-  }
-
-  function textNode(text) {
-    var p = document.createElement("p");
-    p.textContent = text;
-    return p;
-  }
-
-  function buildAnswerNode(entry, question) {
-    var box = document.createElement("div");
-
-    var title = document.createElement("p");
+  if (result.title) {
+    const title = document.createElement("p");
     title.className = "answer-title";
-    title.textContent = entry.title;
+    title.textContent = result.title;
     box.appendChild(title);
+  }
 
-    if (!entry.verified) {
-      var badge = document.createElement("span");
-      badge.className = "badge badge--unverified";
-      badge.textContent = "スタッフ未確認の登録情報です。必ず出典で確認してください";
-      box.appendChild(badge);
-    }
+  if (result.unverified) {
+    const badge = document.createElement("span");
+    badge.className = "badge badge--unverified";
+    badge.textContent = "スタッフ未確認の登録情報です。必ず出典で確認してください";
+    box.appendChild(badge);
+  }
 
-    box.appendChild(textNode(entry.answer));
+  box.appendChild(textNode(result.answer));
 
-    var srcLabel = document.createElement("p");
-    srcLabel.className = "source-label";
-    srcLabel.textContent = "出典:";
-    box.appendChild(srcLabel);
+  const srcLabel = document.createElement("p");
+  srcLabel.className = "source-label";
+  srcLabel.textContent = "出典:";
+  box.appendChild(srcLabel);
 
-    var srcList = document.createElement("ul");
-    srcList.className = "source-list";
-    entry.sources.forEach(function (src) {
-      var li = document.createElement("li");
-      var a = document.createElement("a");
-      a.href = src.url;
-      a.target = "_blank";
-      a.rel = "noopener noreferrer";
-      a.textContent = src.label + "(" + src.url + ")";
-      li.appendChild(a);
-      srcList.appendChild(li);
-    });
-    box.appendChild(srcList);
+  const srcList = document.createElement("ul");
+  srcList.className = "source-list";
+  result.sources.forEach(function (src) {
+    const li = document.createElement("li");
+    const a = document.createElement("a");
+    a.href = src.url;
+    a.target = "_blank";
+    a.rel = "noopener noreferrer";
+    a.textContent = src.label + "(" + src.url + ")";
+    li.appendChild(a);
+    srcList.appendChild(li);
+  });
+  box.appendChild(srcList);
 
-    if (entry.lastVerified) {
-      var vd = document.createElement("p");
-      vd.className = "verified-date";
-      vd.textContent = "スタッフ最終確認日: " + entry.lastVerified;
-      box.appendChild(vd);
-    }
+  if (result.lastVerified) {
+    const vd = document.createElement("p");
+    vd.className = "verified-date";
+    vd.textContent = "スタッフ最終確認日: " + result.lastVerified;
+    box.appendChild(vd);
+  }
 
-    // フィードバックボタン
-    var fb = document.createElement("div");
-    fb.className = "feedback";
-    var fbLabel = document.createElement("span");
-    fbLabel.textContent = "この回答は正確でしたか?";
-    fb.appendChild(fbLabel);
+  // フィードバックボタン
+  const fb = document.createElement("div");
+  fb.className = "feedback";
+  const fbLabel = document.createElement("span");
+  fbLabel.textContent = "この回答は正確でしたか?";
+  fb.appendChild(fbLabel);
 
-    ["正確", "誤りがある"].forEach(function (label, i) {
-      var btn = document.createElement("button");
-      btn.type = "button";
-      btn.textContent = i === 0 ? "👍 " + label : "👎 " + label;
-      btn.addEventListener("click", function () {
-        var list = load(STORAGE_KEYS.feedback);
-        list.push({
-          time: new Date().toISOString(),
-          question: question,
-          entryId: entry.id,
-          verdict: i === 0 ? "correct" : "incorrect"
-        });
+  ["正確", "誤りがある"].forEach(function (label, i) {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.textContent = i === 0 ? "👍 " + label : "👎 " + label;
+    btn.addEventListener("click", async function () {
+      const record = {
+        time: new Date().toISOString(),
+        question: question,
+        answer: result.answer,
+        entryIds: result.entryIds,
+        verdict: i === 0 ? "correct" : "incorrect"
+      };
+
+      const sent = await sendVerdict(record);
+      if (!sent) {
+        const list = load(STORAGE_KEYS.feedback);
+        list.push(record);
         save(STORAGE_KEYS.feedback, list);
-        fb.innerHTML = "";
-        fb.appendChild(textNode(
+      }
+
+      fb.innerHTML = "";
+      fb.appendChild(
+        textNode(
           i === 0
             ? "フィードバックを記録しました。ありがとうございます。"
             : "誤りの報告を記録しました。管理パネルで確認のうえ、必要ならこの回答を停止してください。"
-        ));
-        renderAdmin();
-      });
-      fb.appendChild(btn);
+        )
+      );
+      renderAdmin();
     });
-    box.appendChild(fb);
+    fb.appendChild(btn);
+  });
+  box.appendChild(fb);
 
-    return box;
-  }
+  return box;
+}
 
-  function buildNoAnswerNode(question) {
-    var box = document.createElement("div");
-    box.appendChild(textNode(
-      "申し訳ありません。この質問に対応する確認済みの情報がナレッジベースに登録されていないため、回答できません。" +
-      "憶測での回答は行わない方針です。"
-    ));
-    box.appendChild(textNode(
+async function buildNoAnswerNode(question, reason) {
+  const box = document.createElement("div");
+  box.appendChild(
+    textNode(
+      reason ||
+        "申し訳ありません。この質問に対応する確認済みの情報がナレッジベースに登録されていないため、回答できません。憶測での回答は行わない方針です。"
+    )
+  );
+  box.appendChild(
+    textNode(
       "お急ぎの場合は au 公式サポート(https://www.au.com/support/)をご確認ください。" +
-      "この質問は「未回答の質問」として記録され、今後の情報登録に活用されます。"
-    ));
-    var list = load(STORAGE_KEYS.unanswered);
+        "この質問は「未回答の質問」として記録され、今後の情報登録に活用されます。"
+    )
+  );
+
+  const sent = await sendUnanswered(question);
+  if (!sent) {
+    const list = load(STORAGE_KEYS.unanswered);
     list.push({ time: new Date().toISOString(), question: question });
     save(STORAGE_KEYS.unanswered, list);
-    renderAdmin();
-    return box;
   }
+  renderAdmin();
+  return box;
+}
 
-  function handleQuestion(question) {
-    addMessage("user", textNode(question));
-    var entry = findBestEntry(question);
-    if (entry) {
-      addMessage("bot", buildAnswerNode(entry, question));
+async function handleQuestion(question) {
+  addMessage("user", textNode(question));
+
+  const pending = addMessage("bot", textNode("回答を準備しています…"));
+
+  // 経路1: 生成AI
+  const aiResult = await askAi(question);
+
+  if (aiResult) {
+    serverMode = true;
+    updateModeBadge();
+    pending.remove();
+    if (aiResult.answerable) {
+      addMessage(
+        "bot",
+        buildAnswerNode(
+          {
+            answer: aiResult.answer,
+            sources: aiResult.sources,
+            entryIds: aiResult.entryIds,
+            unverified: aiResult.unverified
+          },
+          question
+        )
+      );
     } else {
-      addMessage("bot", buildNoAnswerNode(question));
+      addMessage("bot", await buildNoAnswerNode(question, aiResult.answer));
     }
+    return;
   }
 
-  chatForm.addEventListener("submit", function (e) {
-    e.preventDefault();
-    var q = chatInput.value.trim();
-    if (!q) return;
-    chatInput.value = "";
+  // 経路2: キーワード検索へフォールバック
+  serverMode = false;
+  updateModeBadge();
+  pending.remove();
+
+  const entry = findBestEntry(question);
+  if (entry) {
+    addMessage(
+      "bot",
+      buildAnswerNode(
+        {
+          title: entry.title,
+          answer: entry.answer,
+          sources: entry.sources,
+          entryIds: [entry.id],
+          unverified: !entry.verified,
+          lastVerified: entry.lastVerified
+        },
+        question
+      )
+    );
+  } else {
+    addMessage("bot", await buildNoAnswerNode(question, null));
+  }
+}
+
+chatForm.addEventListener("submit", function (e) {
+  e.preventDefault();
+  const q = chatInput.value.trim();
+  if (!q) return;
+  chatInput.value = "";
+  handleQuestion(q);
+});
+
+// よくある質問ボタン
+const suggestArea = document.getElementById("suggest-buttons");
+[
+  "auの問い合わせ電話番号は?",
+  "近くのauショップを予約したい",
+  "請求額はどこで確認できる?",
+  "スマホをなくしたときはどうする?"
+].forEach(function (q) {
+  const btn = document.createElement("button");
+  btn.type = "button";
+  btn.textContent = q;
+  btn.addEventListener("click", function () {
     handleQuestion(q);
   });
+  suggestArea.appendChild(btn);
+});
 
-  // よくある質問ボタン(KB の代表項目から生成)
-  var suggestArea = document.getElementById("suggest-buttons");
-  [
-    "auの問い合わせ電話番号は?",
-    "近くのauショップを予約したい",
-    "請求額はどこで確認できる?",
-    "スマホをなくしたときはどうする?"
-  ].forEach(function (q) {
-    var btn = document.createElement("button");
-    btn.type = "button";
-    btn.textContent = q;
-    btn.addEventListener("click", function () {
-      handleQuestion(q);
+addMessage(
+  "bot",
+  textNode(
+    "こんにちは。au サービス案内チャットボットです。" +
+      "スタッフが登録した情報の範囲で、出典付きでお答えします。質問をどうぞ。"
+  )
+);
+
+// ---------- タブ切り替え ----------
+
+const tabChat = document.getElementById("tab-chat");
+const tabAdmin = document.getElementById("tab-admin");
+const panelChat = document.getElementById("panel-chat");
+const panelAdmin = document.getElementById("panel-admin");
+
+function activate(tab) {
+  const chat = tab === "chat";
+  tabChat.classList.toggle("is-active", chat);
+  tabAdmin.classList.toggle("is-active", !chat);
+  panelChat.classList.toggle("is-active", chat);
+  panelAdmin.classList.toggle("is-active", !chat);
+  if (!chat) renderAdmin();
+}
+tabChat.addEventListener("click", function () { activate("chat"); });
+tabAdmin.addEventListener("click", function () { activate("admin"); });
+
+// ---------- 管理パネル ----------
+
+function renderRows(container, rows, emptyText) {
+  container.innerHTML = "";
+  if (rows.length === 0) {
+    container.appendChild(textNode(emptyText));
+    return;
+  }
+  rows.forEach(function (node) {
+    container.appendChild(node);
+  });
+}
+
+async function renderAdmin() {
+  const fbBox = document.getElementById("admin-feedback");
+  const unBox = document.getElementById("admin-unanswered");
+  const kbBox = document.getElementById("admin-kb");
+  const scopeNote = document.getElementById("admin-scope");
+
+  // サーバー集計を優先。使えなければこのブラウザの localStorage を表示する。
+  const server = await fetchAdminData();
+
+  if (server) {
+    scopeNote.textContent = "全社集計(サーバー保存)を表示しています。";
+
+    renderRows(
+      fbBox,
+      server.entries
+        .filter(function (e) { return e.correct > 0 || e.incorrect > 0; })
+        .map(function (e) {
+          const row = document.createElement("div");
+          row.className = "admin-row";
+          row.appendChild(
+            textNode(e.title + " — 👍 正確 " + e.correct + " 件 / 👎 誤り " + e.incorrect + " 件")
+          );
+          return row;
+        }),
+      "まだフィードバックはありません。"
+    );
+
+    renderRows(
+      unBox,
+      server.unanswered.map(function (u) {
+        const row = document.createElement("div");
+        row.className = "admin-row";
+        row.appendChild(
+          textNode(
+            u.created_at.slice(0, 16).replace("T", " ") +
+              " — " +
+              u.question +
+              (u.user_email ? "(" + u.user_email + ")" : "")
+          )
+        );
+        return row;
+      }),
+      "未回答の質問はありません。"
+    );
+
+    renderRows(
+      kbBox,
+      server.entries.map(function (e) {
+        const row = document.createElement("div");
+        row.className = "admin-row";
+        const label = textNode(
+          e.title +
+            (e.verified ? "(確認済み)" : "(未確認)") +
+            (e.disabled ? " — 回答停止中" : "")
+        );
+        if (e.disabled) label.classList.add("is-disabled");
+        row.appendChild(label);
+
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.textContent = e.disabled ? "回答を再開する" : "回答を停止する(要修正)";
+        btn.addEventListener("click", async function () {
+          btn.disabled = true;
+          await setEntryDisabled(e.id, !e.disabled);
+          renderAdmin();
+        });
+        row.appendChild(btn);
+        return row;
+      }),
+      "ナレッジベース項目がありません。"
+    );
+    return;
+  }
+
+  // --- フォールバック: このブラウザの localStorage ---
+  scopeNote.textContent =
+    "このブラウザに保存された分だけを表示しています(サーバー集計は未設定)。";
+
+  const feedback = load(STORAGE_KEYS.feedback);
+  const unanswered = load(STORAGE_KEYS.unanswered);
+
+  const byEntry = {};
+  feedback.forEach(function (f) {
+    (f.entryIds || []).forEach(function (id) {
+      if (!byEntry[id]) byEntry[id] = { correct: 0, incorrect: 0 };
+      byEntry[id][f.verdict] += 1;
     });
-    suggestArea.appendChild(btn);
   });
 
-  // 初回メッセージ
-  addMessage("bot", textNode(
-    "こんにちは。au サービス案内チャットボットです。" +
-    "スタッフが登録した情報の範囲で、出典付きでお答えします。質問をどうぞ。"
-  ));
-
-  // ---------- タブ切り替え ----------
-
-  var tabChat = document.getElementById("tab-chat");
-  var tabAdmin = document.getElementById("tab-admin");
-  var panelChat = document.getElementById("panel-chat");
-  var panelAdmin = document.getElementById("panel-admin");
-
-  function activate(tab) {
-    var chat = tab === "chat";
-    tabChat.classList.toggle("is-active", chat);
-    tabAdmin.classList.toggle("is-active", !chat);
-    panelChat.classList.toggle("is-active", chat);
-    panelAdmin.classList.toggle("is-active", !chat);
-    if (!chat) renderAdmin();
-  }
-  tabChat.addEventListener("click", function () { activate("chat"); });
-  tabAdmin.addEventListener("click", function () { activate("admin"); });
-
-  // ---------- 管理パネル ----------
-
-  function renderAdmin() {
-    var feedback = load(STORAGE_KEYS.feedback);
-    var unanswered = load(STORAGE_KEYS.unanswered);
-
-    // 回答フィードバック(項目ごとの集計)
-    var fbBox = document.getElementById("admin-feedback");
-    fbBox.innerHTML = "";
-    if (feedback.length === 0) {
-      fbBox.appendChild(textNode("まだフィードバックはありません。"));
-    } else {
-      var byEntry = {};
-      feedback.forEach(function (f) {
-        byEntry[f.entryId] = byEntry[f.entryId] || { correct: 0, incorrect: 0 };
-        byEntry[f.entryId][f.verdict] += 1;
-      });
-      Object.keys(byEntry).forEach(function (id) {
-        var entry = AU_KNOWLEDGE.filter(function (e) { return e.id === id; })[0];
-        var row = document.createElement("div");
-        row.className = "admin-row";
-        var name = entry ? entry.title : id;
-        row.appendChild(textNode(
-          name + " — 👍 正確 " + byEntry[id].correct + " 件 / 👎 誤り " + byEntry[id].incorrect + " 件"
-        ));
-        fbBox.appendChild(row);
-      });
-    }
-
-    // 未回答の質問
-    var unBox = document.getElementById("admin-unanswered");
-    unBox.innerHTML = "";
-    if (unanswered.length === 0) {
-      unBox.appendChild(textNode("未回答の質問はありません。"));
-    } else {
-      unanswered.slice(-20).reverse().forEach(function (u) {
-        var row = document.createElement("div");
-        row.className = "admin-row";
-        row.appendChild(textNode(u.time.slice(0, 16).replace("T", " ") + " — " + u.question));
-        unBox.appendChild(row);
-      });
-    }
-
-    // KB の状態と回答停止トグル
-    var kbBox = document.getElementById("admin-kb");
-    kbBox.innerHTML = "";
-    AU_KNOWLEDGE.forEach(function (entry) {
-      var row = document.createElement("div");
+  renderRows(
+    fbBox,
+    Object.keys(byEntry).map(function (id) {
+      const entry = AU_KNOWLEDGE.find(function (e) { return e.id === id; });
+      const row = document.createElement("div");
       row.className = "admin-row";
-      var disabled = isDisabled(entry.id);
+      row.appendChild(
+        textNode(
+          (entry ? entry.title : id) +
+            " — 👍 正確 " + byEntry[id].correct +
+            " 件 / 👎 誤り " + byEntry[id].incorrect + " 件"
+        )
+      );
+      return row;
+    }),
+    "まだフィードバックはありません。"
+  );
 
-      var label = textNode(
+  renderRows(
+    unBox,
+    unanswered.slice(-20).reverse().map(function (u) {
+      const row = document.createElement("div");
+      row.className = "admin-row";
+      row.appendChild(textNode(u.time.slice(0, 16).replace("T", " ") + " — " + u.question));
+      return row;
+    }),
+    "未回答の質問はありません。"
+  );
+
+  renderRows(
+    kbBox,
+    AU_KNOWLEDGE.map(function (entry) {
+      const row = document.createElement("div");
+      row.className = "admin-row";
+      const disabled = isDisabledLocally(entry.id);
+
+      const label = textNode(
         entry.title +
-        (entry.verified ? "(確認済み)" : "(未確認)") +
-        (disabled ? " — 回答停止中" : "")
+          (entry.verified ? "(確認済み)" : "(未確認)") +
+          (disabled ? " — 回答停止中" : "")
       );
       if (disabled) label.classList.add("is-disabled");
       row.appendChild(label);
 
-      var btn = document.createElement("button");
+      const btn = document.createElement("button");
       btn.type = "button";
       btn.textContent = disabled ? "回答を再開する" : "回答を停止する(要修正)";
       btn.addEventListener("click", function () {
-        setDisabled(entry.id, !disabled);
+        setDisabledLocally(entry.id, !disabled);
         renderAdmin();
       });
       row.appendChild(btn);
-      kbBox.appendChild(row);
-    });
+      return row;
+    }),
+    "ナレッジベース項目がありません。"
+  );
+}
+
+// エクスポート: このブラウザの収集データを JSON でダウンロード
+document.getElementById("export-button").addEventListener("click", function () {
+  const data = {
+    exportedAt: new Date().toISOString(),
+    feedback: load(STORAGE_KEYS.feedback),
+    unanswered: load(STORAGE_KEYS.unanswered),
+    disabledEntries: load(STORAGE_KEYS.disabled)
+  };
+  const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = "au-chatbot-feedback-" + new Date().toISOString().slice(0, 10) + ".json";
+  a.click();
+  URL.revokeObjectURL(a.href);
+});
+
+document.getElementById("clear-button").addEventListener("click", function () {
+  if (!confirm("このブラウザに保存された収集データ(フィードバック・未回答質問・停止設定)を消去します。よろしいですか?")) {
+    return;
   }
-
-  // エクスポート: 収集データを JSON ファイルとしてダウンロード
-  document.getElementById("export-button").addEventListener("click", function () {
-    var data = {
-      exportedAt: new Date().toISOString(),
-      feedback: load(STORAGE_KEYS.feedback),
-      unanswered: load(STORAGE_KEYS.unanswered),
-      disabledEntries: load(STORAGE_KEYS.disabled)
-    };
-    var blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
-    var a = document.createElement("a");
-    a.href = URL.createObjectURL(blob);
-    a.download = "au-chatbot-feedback-" + new Date().toISOString().slice(0, 10) + ".json";
-    a.click();
-    URL.revokeObjectURL(a.href);
+  Object.keys(STORAGE_KEYS).forEach(function (k) {
+    localStorage.removeItem(STORAGE_KEYS[k]);
   });
-
-  document.getElementById("clear-button").addEventListener("click", function () {
-    if (!confirm("このブラウザに保存された収集データ(フィードバック・未回答質問・停止設定)を消去します。よろしいですか?")) {
-      return;
-    }
-    Object.keys(STORAGE_KEYS).forEach(function (k) {
-      localStorage.removeItem(STORAGE_KEYS[k]);
-    });
-    renderAdmin();
-  });
-
   renderAdmin();
-})();
+});
+
+updateModeBadge();
+renderAdmin();

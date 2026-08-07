@@ -1,0 +1,29 @@
+# Cloudflare Pages 設定
+#
+# 通常は Cloudflare のダッシュボードから設定するため、このファイルを触る必要はありません。
+# コマンドラインからデプロイしたい場合の参照用です。
+# セットアップ手順は docs/cloudflare-setup.md を参照してください。
+
+name = "au-chatbot"
+compatibility_date = "2026-08-07"
+
+# リポジトリのルートをそのまま配信する(ビルド不要の静的サイトのため)
+pages_build_output_dir = "."
+
+# フィードバック集約用データベース。
+# database_id は `npx wrangler d1 create au-chatbot` の出力を貼り付けてください。
+[[d1_databases]]
+binding = "DB"
+database_name = "au-chatbot"
+database_id = "ここに database_id を貼り付け"
+
+[vars]
+# 使用するモデル。コストと回答品質のバランスで選びます。
+#   claude-haiku-4-5 … 最速・最安($1 / $5 per 1M tokens)。現在の想定はこちら
+#   claude-sonnet-5  … 高品質($3 / $15 per 1M tokens)
+# 変更する場合はこの値を書き換えるか、ダッシュボードの環境変数を上書きしてください。
+CLAUDE_MODEL = "claude-haiku-4-5"
+
+# ANTHROPIC_API_KEY は平文で書かないでください。
+# 必ずシークレットとして設定します:
+#   npx wrangler pages secret put ANTHROPIC_API_KEY

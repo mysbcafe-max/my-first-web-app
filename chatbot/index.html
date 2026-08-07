@@ -13,6 +13,7 @@
         <nav class="app-nav">
             <button id="tab-chat" class="tab-button is-active" type="button">チャット</button>
             <button id="tab-admin" class="tab-button" type="button">管理パネル</button>
+            <span id="mode-badge" class="mode-badge"></span>
             <a class="tab-link" href="../index.html">サイトトップへ</a>
         </nav>
     </header>
@@ -23,7 +24,8 @@
             <div class="policy-note">
                 <strong>回答ポリシー:</strong>
                 このボットはスタッフが登録・確認したナレッジベースの情報だけを使って回答します。
-                回答には必ず出典(公式サイトのURL)を付けます。
+                回答には必ず出典(公式サイトのURL)を付けます。出典URLはナレッジベースから
+                サーバーが引くため、生成AIが出典を作り出すことはできません。
                 登録がない・根拠がない質問には、憶測で答えず「回答できません」と明示します。
             </div>
 
@@ -46,9 +48,9 @@
             <div class="policy-note">
                 <strong>管理パネル:</strong>
                 回答へのフィードバック(正確/誤り)と未回答の質問がここに集まります。
-                誤りと判断した項目は「回答を停止」でき、停止中は本番回答に使われません。
-                エクスポートしたデータを添えて Issue / PR でナレッジベースを修正すると、次回から反映されます。
-                (データはこのブラウザの localStorage に保存されます)
+                誤りと判断した項目は「回答を停止」でき、停止中は全社の回答に使われなくなります。
+                恒久的な修正は、ナレッジベース(<code>chatbot/data/knowledge.js</code>)を直す PR で行います。
+                <span id="admin-scope" class="admin-scope"></span>
             </div>
 
             <h2>回答フィードバック</h2>
@@ -61,7 +63,7 @@
             <div id="admin-kb" class="admin-list"></div>
 
             <div class="admin-actions">
-                <button id="export-button" type="button">収集データをエクスポート(JSON)</button>
+                <button id="export-button" type="button">このブラウザの収集データをエクスポート(JSON)</button>
                 <button id="clear-button" type="button" class="danger">このブラウザの収集データを消去</button>
             </div>
         </section>
@@ -71,7 +73,6 @@
         <p>本ツールは社内案内用の非公式ツールです。最新・正確な情報は必ず各回答の出典(au 公式サイト)で確認してください。</p>
     </footer>
 
-    <script src="data/knowledge.js"></script>
-    <script src="chatbot.js"></script>
+    <script type="module" src="chatbot.js"></script>
 </body>
 </html>

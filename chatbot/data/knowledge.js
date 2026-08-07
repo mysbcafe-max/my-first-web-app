@@ -1,14 +1,17 @@
 // au サービス案内チャットボット ナレッジベース
 //
+// このファイルが唯一の情報源です。フロントエンド(キーワード検索)と
+// Cloudflare Pages Functions(生成AI回答)の両方がここを読みます。
+//
 // 運用ルール:
-// - ここに載っている情報「だけ」がチャットボットの回答になります(憶測回答の防止)
+// - ここに載っている情報「だけ」が回答になります(憶測回答の防止)
 // - 追加・修正は PR 経由で行い、スタッフが出典 URL を実際に確認してから
 //   verified を true にし、lastVerified を更新すること
 // - verified が false の項目は、回答時に「スタッフ未確認」バッジ付きで表示されます
-// - 誤りが見つかった項目は、管理パネルで回答停止 → この
-//   ファイルを修正する PR を出す、の順で直します
+// - 誤りが見つかった項目は、管理パネルで回答停止 → このファイルを修正する
+//   PR を出す、の順で直します
 
-const AU_KNOWLEDGE = [
+export const AU_KNOWLEDGE = [
   {
     id: "contact-phone",
     title: "au への電話問い合わせ(総合案内)",
@@ -119,3 +122,20 @@ const AU_KNOWLEDGE = [
     lastVerified: null
   }
 ];
+
+// 生成AI に渡す根拠テキストを組み立てる。
+// 出典 URL は渡さない — URL はサーバー側が id から引くため、
+// モデルが URL を「作文」する余地を構造的になくしている。
+export function buildKnowledgeContext(entries = AU_KNOWLEDGE) {
+  return entries
+    .map(function (entry) {
+      return [
+        "<項目 id=\"" + entry.id + "\">",
+        "見出し: " + entry.title,
+        "内容: " + entry.answer,
+        "スタッフ確認済み: " + (entry.verified ? "はい(" + entry.lastVerified + ")" : "いいえ"),
+        "</項目>"
+      ].join("\n");
+    })
+    .join("\n\n");
+}

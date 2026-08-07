@@ -58,6 +58,24 @@ body {
   margin-left: auto;
 }
 
+.mode-badge {
+  font-size: 0.7rem;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.25);
+  color: #fff;
+}
+
+.mode-badge:empty {
+  display: none;
+}
+
+.admin-scope {
+  display: block;
+  margin-top: 6px;
+  font-weight: bold;
+}
+
 main {
   max-width: 720px;
   margin: 0 auto;
