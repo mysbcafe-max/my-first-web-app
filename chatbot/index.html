@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>au サービス案内チャットボット(社内向け)</title>
+    <link rel="stylesheet" href="chatbot.css">
+</head>
+<body>
+    <header class="app-header">
+        <h1>au サービス案内チャットボット</h1>
+        <p class="app-subtitle">社内スタッフ向け・ナレッジベース回答型(出典必須)</p>
+        <nav class="app-nav">
+            <button id="tab-chat" class="tab-button is-active" type="button">チャット</button>
+            <button id="tab-admin" class="tab-button" type="button">管理パネル</button>
+            <a class="tab-link" href="../index.html">サイトトップへ</a>
+        </nav>
+    </header>
+
+    <main>
+        <!-- チャット画面 -->
+        <section id="panel-chat" class="panel is-active" aria-label="チャット">
+            <div class="policy-note">
+                <strong>回答ポリシー:</strong>
+                このボットはスタッフが登録・確認したナレッジベースの情報だけを使って回答します。
+                回答には必ず出典(公式サイトのURL)を付けます。
+                登録がない・根拠がない質問には、憶測で答えず「回答できません」と明示します。
+            </div>
+
+            <div id="chat-log" class="chat-log" aria-live="polite"></div>
+
+            <form id="chat-form" class="chat-form">
+                <input id="chat-input" type="text" autocomplete="off"
+                       placeholder="例: auの問い合わせ電話番号は?" aria-label="質問を入力">
+                <button type="submit">送信</button>
+            </form>
+
+            <div class="suggest-area">
+                <p class="suggest-label">よくある質問(タップで入力):</p>
+                <div id="suggest-buttons" class="suggest-buttons"></div>
+            </div>
+        </section>
+
+        <!-- 管理パネル -->
+        <section id="panel-admin" class="panel" aria-label="管理パネル">
+            <div class="policy-note">
+                <strong>管理パネル:</strong>
+                回答へのフィードバック(正確/誤り)と未回答の質問がここに集まります。
+                誤りと判断した項目は「回答を停止」でき、停止中は本番回答に使われません。
+                エクスポートしたデータを添えて Issue / PR でナレッジベースを修正すると、次回から反映されます。
+                (データはこのブラウザの localStorage に保存されます)
+            </div>
+
+            <h2>回答フィードバック</h2>
+            <div id="admin-feedback" class="admin-list"></div>
+
+            <h2>未回答だった質問</h2>
+            <div id="admin-unanswered" class="admin-list"></div>
+
+            <h2>ナレッジベースの状態</h2>
+            <div id="admin-kb" class="admin-list"></div>
+
+            <div class="admin-actions">
+                <button id="export-button" type="button">収集データをエクスポート(JSON)</button>
+                <button id="clear-button" type="button" class="danger">このブラウザの収集データを消去</button>
+            </div>
+        </section>
+    </main>
+
+    <footer class="app-footer">
+        <p>本ツールは社内案内用の非公式ツールです。最新・正確な情報は必ず各回答の出典(au 公式サイト)で確認してください。</p>
+    </footer>
+
+    <script src="data/knowledge.js"></script>
+    <script src="chatbot.js"></script>
+</body>
+</html>

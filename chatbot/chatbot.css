@@ -1,0 +1,322 @@
+/* au サービス案内チャットボット */
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family: "Hiragino Sans", "Yu Gothic", "Meiryo", sans-serif;
+  background: #f5f6f8;
+  color: #222;
+  line-height: 1.7;
+}
+
+.app-header {
+  background: #eb5505; /* au ブランドを想起させるオレンジ */
+  color: #fff;
+  padding: 16px;
+}
+
+.app-header h1 {
+  margin: 0;
+  font-size: 1.25rem;
+}
+
+.app-subtitle {
+  margin: 4px 0 12px;
+  font-size: 0.85rem;
+  opacity: 0.9;
+}
+
+.app-nav {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.tab-button {
+  border: 1px solid rgba(255, 255, 255, 0.7);
+  background: transparent;
+  color: #fff;
+  padding: 6px 14px;
+  border-radius: 999px;
+  cursor: pointer;
+  font-size: 0.9rem;
+}
+
+.tab-button.is-active {
+  background: #fff;
+  color: #eb5505;
+  font-weight: bold;
+}
+
+.tab-link {
+  color: #fff;
+  font-size: 0.85rem;
+  margin-left: auto;
+}
+
+main {
+  max-width: 720px;
+  margin: 0 auto;
+  padding: 16px;
+}
+
+.panel {
+  display: none;
+}
+
+.panel.is-active {
+  display: block;
+}
+
+.policy-note {
+  background: #fff7e6;
+  border: 1px solid #f0c36d;
+  border-radius: 8px;
+  padding: 12px;
+  font-size: 0.85rem;
+  margin-bottom: 16px;
+}
+
+/* チャット */
+
+.chat-log {
+  background: #fff;
+  border: 1px solid #ddd;
+  border-radius: 8px;
+  padding: 12px;
+  height: 50vh;
+  min-height: 280px;
+  overflow-y: auto;
+}
+
+.message {
+  margin: 8px 0;
+  display: flex;
+}
+
+.message > div,
+.message > p {
+  max-width: 85%;
+  padding: 10px 14px;
+  border-radius: 12px;
+  margin: 0;
+}
+
+.message--user {
+  justify-content: flex-end;
+}
+
+.message--user > p {
+  background: #eb5505;
+  color: #fff;
+  border-bottom-right-radius: 2px;
+}
+
+.message--bot > div,
+.message--bot > p {
+  background: #f0f1f4;
+  border-bottom-left-radius: 2px;
+}
+
+.message p {
+  margin: 0 0 8px;
+}
+
+.message p:last-child {
+  margin-bottom: 0;
+}
+
+.answer-title {
+  font-weight: bold;
+}
+
+.badge--unverified {
+  display: inline-block;
+  background: #fdecea;
+  color: #b3261e;
+  border: 1px solid #b3261e;
+  border-radius: 4px;
+  font-size: 0.75rem;
+  padding: 2px 6px;
+  margin-bottom: 8px;
+}
+
+.source-label {
+  font-size: 0.8rem;
+  color: #555;
+  margin-bottom: 2px;
+}
+
+.source-list {
+  margin: 0 0 8px;
+  padding-left: 18px;
+  font-size: 0.85rem;
+  word-break: break-all;
+}
+
+.verified-date {
+  font-size: 0.75rem;
+  color: #777;
+}
+
+.feedback {
+  border-top: 1px dashed #ccc;
+  margin-top: 8px;
+  padding-top: 8px;
+  font-size: 0.85rem;
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.feedback button {
+  border: 1px solid #aaa;
+  background: #fff;
+  border-radius: 999px;
+  padding: 4px 10px;
+  cursor: pointer;
+}
+
+.chat-form {
+  display: flex;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.chat-form input {
+  flex: 1;
+  padding: 10px 12px;
+  border: 1px solid #ccc;
+  border-radius: 8px;
+  font-size: 1rem;
+}
+
+.chat-form button {
+  background: #eb5505;
+  color: #fff;
+  border: none;
+  border-radius: 8px;
+  padding: 10px 20px;
+  font-size: 1rem;
+  cursor: pointer;
+}
+
+.suggest-area {
+  margin-top: 12px;
+}
+
+.suggest-label {
+  font-size: 0.8rem;
+  color: #555;
+  margin: 0 0 6px;
+}
+
+.suggest-buttons {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.suggest-buttons button {
+  border: 1px solid #eb5505;
+  color: #eb5505;
+  background: #fff;
+  border-radius: 999px;
+  padding: 6px 12px;
+  font-size: 0.85rem;
+  cursor: pointer;
+}
+
+/* 管理パネル */
+
+.panel h2 {
+  font-size: 1rem;
+  border-left: 4px solid #eb5505;
+  padding-left: 8px;
+  margin: 20px 0 8px;
+}
+
+.admin-list {
+  background: #fff;
+  border: 1px solid #ddd;
+  border-radius: 8px;
+  padding: 8px 12px;
+  font-size: 0.9rem;
+}
+
+.admin-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 0;
+  border-bottom: 1px solid #eee;
+  flex-wrap: wrap;
+}
+
+.admin-row:last-child {
+  border-bottom: none;
+}
+
+.admin-row p {
+  margin: 0;
+  flex: 1;
+  min-width: 200px;
+}
+
+.admin-row p.is-disabled {
+  color: #b3261e;
+}
+
+.admin-row button {
+  border: 1px solid #aaa;
+  background: #fff;
+  border-radius: 6px;
+  padding: 4px 10px;
+  cursor: pointer;
+  font-size: 0.8rem;
+}
+
+.admin-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 16px;
+  flex-wrap: wrap;
+}
+
+.admin-actions button {
+  border: 1px solid #aaa;
+  background: #fff;
+  border-radius: 8px;
+  padding: 8px 14px;
+  cursor: pointer;
+}
+
+.admin-actions button.danger {
+  border-color: #b3261e;
+  color: #b3261e;
+}
+
+.app-footer {
+  max-width: 720px;
+  margin: 0 auto;
+  padding: 8px 16px 24px;
+  font-size: 0.75rem;
+  color: #777;
+}
+
+@media (max-width: 480px) {
+  .chat-log {
+    height: 45vh;
+  }
+
+  .message > div,
+  .message > p {
+    max-width: 95%;
+  }
+}
