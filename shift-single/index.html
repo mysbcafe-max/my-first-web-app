@@ -1,0 +1,186 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>シフト生成(一店舗用) | Web事業部</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="app-header">
+    <div class="app-header__inner">
+      <h1 class="app-title"><a href="../">Web事業部</a> / シフト生成(一店舗用)</h1>
+      <nav class="tabs" role="tablist" aria-label="画面切り替え">
+        <button class="tab is-active" role="tab" data-tab="generate" aria-selected="true">シフト生成</button>
+        <button class="tab" role="tab" data-tab="staff" aria-selected="false">スタッフ <span class="badge" id="count-staff">0</span></button>
+        <button class="tab" role="tab" data-tab="store" aria-selected="false">店舗設定 <span class="badge" id="count-slots">0</span></button>
+        <button class="tab" role="tab" data-tab="data" aria-selected="false">データ</button>
+      </nav>
+    </div>
+  </header>
+
+  <main class="app-main">
+
+    <!-- ============ シフト生成 ============ -->
+    <section class="panel" id="tab-generate" role="tabpanel">
+      <h2>シフト生成</h2>
+      <p class="help">
+        「スタッフ」タブで登録した情報(フロア可否・キッチン可否・レベル・出勤日数・希望休など)と、
+        「店舗設定」タブの時間帯ごとの必要人数から、1 か月分のシフト表を作ります。
+        出勤日数は各スタッフに設定した日数を上限に、できるだけその日数に近づけます。
+      </p>
+
+      <form id="form-generate" class="form-grid">
+        <label>連勤上限(日) <input type="number" name="maxConsecutiveDays" min="0" max="14" step="1" value="5"> <small>0 で無制限。スタッフ個別の設定があればそちらが優先されます</small></label>
+        <details class="form-grid__full">
+          <summary>組み方の調整(上級者向け)</summary>
+          <div class="form-grid">
+            <label>出勤日数の残りを優先する強さ <input type="number" name="weightNeed" min="0" step="10" value="100"> <small>大きいほど、設定した出勤日数をきっちり消化します</small></label>
+            <label>同じ時間帯に入りやすくする <input type="number" name="weightContinuity" min="0" step="1" value="6"> <small>早番の人はなるべく早番、にしたいとき大きく</small></label>
+            <label>レベルの調整 <input type="number" name="weightLevel" min="0" step="1" value="3"> <small>ベテランが同じ枠に固まらないようにします</small></label>
+            <label>連勤への減点 <input type="number" name="weightConsecutive" min="0" step="1" value="4"> <small>大きいほど連勤が減ります</small></label>
+            <label class="check-inline"><input type="checkbox" name="improve" checked> 同じ日の枠どうしの入れ替えで人数不足を減らす</label>
+          </div>
+        </details>
+        <div class="form-actions form-grid__full">
+          <button type="submit" class="btn btn-primary">シフトを生成</button>
+          <span id="generate-status" class="status"></span>
+        </div>
+      </form>
+
+      <div id="result" class="result" hidden>
+        <div class="result__toolbar">
+          <h3>生成結果 <small id="result-period"></small></h3>
+          <div class="btn-group">
+            <button type="button" class="btn" id="btn-csv-date">CSV(日付別)</button>
+            <button type="button" class="btn" id="btn-csv-staff">CSV(スタッフ別)</button>
+            <button type="button" class="btn" id="btn-print">印刷</button>
+          </div>
+        </div>
+        <ul class="stats" id="result-stats"></ul>
+        <div id="result-warnings"></div>
+        <h4>日付 × 時間帯</h4>
+        <div class="table-wrap"><table class="matrix" id="result-matrix"></table></div>
+        <h4>スタッフ別の集計</h4>
+        <div class="table-wrap"><table class="list" id="result-staff"></table></div>
+      </div>
+    </section>
+
+    <!-- ============ スタッフ ============ -->
+    <section class="panel" id="tab-staff" role="tabpanel" hidden>
+      <h2>スタッフ</h2>
+      <p class="help">フロア・キッチンのどちらができるか、レベル、この期間に入ってもらう出勤日数を登録します。</p>
+
+      <form id="form-staff" class="form-card">
+        <input type="hidden" name="id">
+        <h3 id="staff-form-title">スタッフを追加</h3>
+        <div class="form-grid">
+          <label><span>名前 <span class="req">*</span></span> <input type="text" name="name" required placeholder="山田 太郎"></label>
+          <label>レベル
+            <select name="level">
+              <option value="1">1(研修中)</option>
+              <option value="2">2(一人立ち)</option>
+              <option value="3" selected>3(中堅)</option>
+              <option value="4">4(リーダー)</option>
+              <option value="5">5(店長代行)</option>
+            </select>
+          </label>
+          <label><span>出勤日数(この期間) <span class="req">*</span></span> <input type="number" name="targetDays" min="0" max="31" step="1" value="20" required> <small>この日数を上限に、できるだけこの日数入れます</small></label>
+          <fieldset>
+            <legend>できる仕事</legend>
+            <div class="check-row">
+              <label><input type="checkbox" name="floor" checked> フロア</label>
+              <label><input type="checkbox" name="kitchen"> キッチン</label>
+            </div>
+          </fieldset>
+          <fieldset class="form-grid__full">
+            <legend>勤務できる曜日</legend>
+            <div class="check-row" id="staff-weekdays"></div>
+          </fieldset>
+          <fieldset class="form-grid__full">
+            <legend>対応できる時間帯</legend>
+            <div class="check-row" id="staff-slots"></div>
+          </fieldset>
+          <div class="form-grid__full">
+            <span class="field-label">希望休</span>
+            <div class="chip-input">
+              <input type="date" id="staff-dayoff-date">
+              <button type="button" class="btn btn-small" id="btn-add-dayoff">追加</button>
+            </div>
+            <div class="chips" id="staff-daysoff"></div>
+          </div>
+          <label>連勤上限(任意) <input type="number" name="maxConsecutiveDays" min="0" max="14" step="1" placeholder="全体設定を使う"></label>
+          <label class="form-grid__full">メモ <input type="text" name="note" placeholder="レジ担当、土日は夕方から など"></label>
+        </div>
+        <div class="form-actions">
+          <button type="submit" class="btn btn-primary" id="btn-staff-submit">追加</button>
+          <button type="button" class="btn" id="btn-staff-cancel" hidden>キャンセル</button>
+          <span id="staff-status" class="status"></span>
+        </div>
+      </form>
+
+      <div class="table-wrap">
+        <table class="list" id="staff-table"></table>
+      </div>
+    </section>
+
+    <!-- ============ 店舗設定 ============ -->
+    <section class="panel" id="tab-store" role="tabpanel" hidden>
+      <h2>店舗設定</h2>
+      <p class="help">シフトを作る期間と、時間帯ごとの必要人数を設定します。</p>
+
+      <form id="form-store" class="form-card">
+        <div class="form-grid">
+          <label>店舗名 <input type="text" name="name" placeholder="カフェ 本店"></label>
+          <label><span>開始日 <span class="req">*</span></span> <input type="date" name="periodStart" required></label>
+          <label><span>終了日 <span class="req">*</span></span> <input type="date" name="periodEnd" required></label>
+          <fieldset class="form-grid__full">
+            <legend>定休日(曜日)</legend>
+            <div class="check-row" id="store-closed-weekdays"></div>
+          </fieldset>
+          <div class="form-grid__full">
+            <span class="field-label">臨時休業日</span>
+            <div class="chip-input">
+              <input type="date" id="store-closed-date">
+              <button type="button" class="btn btn-small" id="btn-add-closed-date">追加</button>
+            </div>
+            <div class="chips" id="store-closed-dates"></div>
+          </div>
+        </div>
+      </form>
+
+      <h3>時間帯(シフト枠)</h3>
+      <p class="help">1 日の中の勤務パターンです。必要人数のうち、フロア・キッチンで必ず確保したい人数を指定できます。</p>
+      <div id="slot-list"></div>
+      <div class="form-actions">
+        <button type="button" class="btn" id="btn-add-slot">時間帯を追加</button>
+      </div>
+    </section>
+
+    <!-- ============ データ ============ -->
+    <section class="panel" id="tab-data" role="tabpanel" hidden>
+      <h2>データ</h2>
+      <p class="help">
+        入力した内容はこのブラウザの中(localStorage)だけに保存されます。外部には送信しません。
+        端末を替えるときや、バックアップを取りたいときは書き出し・読み込みを使ってください。
+      </p>
+      <div class="form-actions">
+        <button type="button" class="btn" id="btn-sample">サンプルを読み込む</button>
+        <button type="button" class="btn" id="btn-export">JSON を書き出す</button>
+        <button type="button" class="btn" id="btn-import">JSON を読み込む</button>
+        <input type="file" id="import-file" accept="application/json,.json" hidden>
+        <button type="button" class="btn btn-danger" id="btn-clear">すべて消す</button>
+      </div>
+      <p class="status" id="data-status"></p>
+    </section>
+
+  </main>
+
+  <footer class="app-footer">
+    データはブラウザ内にのみ保存されます(外部送信なし・費用ゼロ)。
+  </footer>
+
+  <script src="scheduler.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
