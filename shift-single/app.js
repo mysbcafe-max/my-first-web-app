@@ -86,6 +86,7 @@
         periodEnd: period.end,
         closedWeekdays: [],
         closedDates: [],
+        dayCountMode: 'work',
         roles: parts.roles,
         levelLabels: parts.levelLabels,
         slots: parts.slots,
@@ -323,6 +324,25 @@
     });
   }
 
+  // 「出勤日数」か「公休日数」か で入力欄を切り替える
+  function syncDayCountFields() {
+    const form = $('#form-staff');
+    const mode = form.elements.dayCountMode.value || data.store.dayCountMode || 'work';
+    const holiday = mode === 'holiday';
+    $('#field-target-days').hidden = holiday;
+    $('#field-holiday-days').hidden = !holiday;
+    form.elements.targetDays.required = !holiday;
+    form.elements.holidayDays.required = holiday;
+    const total = S.eachDate(data.store.periodStart, data.store.periodEnd).length;
+    const hint = $('#holiday-hint');
+    if (hint) {
+      const days = Math.max(0, Number(form.elements.holidayDays.value) || 0);
+      hint.textContent = total
+        ? '期間の全日数 ' + total + '日 − 公休 ' + days + '日 = 出勤 ' + Math.max(0, total - days) + '日'
+        : '期間の全日数から引いた日数が出勤日数になります';
+    }
+  }
+
   function renderDaysOffChips() {
     const box = $('#staff-daysoff');
     box.textContent = '';
@@ -348,6 +368,9 @@
     renderDaysOffChips();
     renderStaffCheckboxes();
     $$('#staff-weekdays input, #staff-slots input, #staff-roles input').forEach(function (i) { i.checked = true; });
+    form.elements.canOpen.checked = true;
+    form.elements.canClose.checked = true;
+    syncDayCountFields();
     $('#staff-form-title').textContent = 'スタッフを追加';
     $('#btn-staff-submit').textContent = '追加';
     $('#btn-staff-cancel').hidden = true;
@@ -359,6 +382,13 @@
     form.elements.name.value = person.name || '';
     form.elements.level.value = String(person.level || 3);
     form.elements.targetDays.value = person.targetDays === undefined ? 20 : person.targetDays;
+    form.elements.dayCountMode.value = person.dayCountMode || '';
+    form.elements.holidayDays.value = person.holidayDays === undefined ? 9 : person.holidayDays;
+    form.elements.startLimit.value = person.startLimit || '';
+    form.elements.endLimit.value = person.endLimit || '';
+    form.elements.canOpen.checked = person.canOpen !== false;
+    form.elements.canClose.checked = person.canClose !== false;
+    syncDayCountFields();
     form.elements.maxConsecutiveDays.value = person.maxConsecutiveDays ? person.maxConsecutiveDays : '';
     form.elements.note.value = person.note || '';
 
@@ -405,6 +435,12 @@
       level: Number(form.elements.level.value),
       roles: roles,
       targetDays: Math.max(0, Number(form.elements.targetDays.value) || 0),
+      dayCountMode: form.elements.dayCountMode.value,
+      holidayDays: Math.max(0, Number(form.elements.holidayDays.value) || 0),
+      startLimit: form.elements.startLimit.value,
+      endLimit: form.elements.endLimit.value,
+      canOpen: form.elements.canOpen.checked,
+      canClose: form.elements.canClose.checked,
       availableWeekdays: weekdays,
       availableSlots: availableSlots,
       daysOff: editingDaysOff.slice().sort(),
@@ -422,6 +458,16 @@
     setStatus('#staff-status', idx >= 0 ? '保存しました' : name + ' を追加しました');
   }
 
+  function dayCountText(p) {
+    const mode = p.dayCountMode || data.store.dayCountMode || 'work';
+    return mode === 'holiday' ? '公休' + (p.holidayDays || 0) + '日' : '出勤' + (p.targetDays || 0) + '日';
+  }
+
+  function hoursText(p) {
+    if (!p.startLimit && !p.endLimit) return '—';
+    return (p.startLimit || '') + '〜' + (p.endLimit || '');
+  }
+
   function renderStaffTable() {
     const table = $('#staff-table');
     table.textContent = '';
@@ -431,7 +477,7 @@
     }
     const head = ['名前', 'レベル'].concat(
       data.store.roles.map(function (r) { return r.name; }),
-      ['出勤日数', '勤務曜日', '対応時間帯', '希望休', 'メモ', '']
+      ['勤務日数', '勤務時間', '締め', '勤務曜日', '対応時間帯', '希望休', 'メモ', '']
     );
     table.appendChild(el('thead', {}, el('tr', {}, head.map(function (h) { return el('th', { text: h }); }))));
 
@@ -452,7 +498,9 @@
           return el('td', { text: personRoles.indexOf(r.id) >= 0 ? '○' : '—' });
         }),
         [
-        el('td', { class: 'num', text: (p.targetDays || 0) + '日' }),
+        el('td', { class: 'num', text: dayCountText(p) }),
+        el('td', { text: hoursText(p) }),
+        el('td', { text: p.canClose === false ? '—' : '○' }),
         el('td', { text: weekdaysText(p.availableWeekdays) }),
         el('td', { text: slotText }),
         el('td', { text: (p.daysOff && p.daysOff.length) ? p.daysOff.length + '日' : '—', title: (p.daysOff || []).join(' ') }),
@@ -491,6 +539,7 @@
     form.elements.name.value = data.store.name || '';
     form.elements.periodStart.value = data.store.periodStart || '';
     form.elements.periodEnd.value = data.store.periodEnd || '';
+    form.elements.dayCountMode.value = data.store.dayCountMode || 'work';
 
     const box = $('#store-closed-weekdays');
     box.textContent = '';
@@ -679,6 +728,22 @@
       leader.addEventListener('change', function () { slot.leaderLevel = Number(leader.value); save(); });
       grid.appendChild(field('リーダー要件', leader, 'その枠に必ず入れたいレベル'));
 
+      // 開店準備・締め作業をこの枠で行うか
+      const dutyBox = el('div', { class: 'check-row' });
+      [['requiresOpen', '開店準備あり(' + (slot.start || '開始時刻') + 'から)'],
+        ['requiresClose', '締め作業あり(' + (slot.end || '終了時刻') + 'まで)']].forEach(function (pair) {
+        const input = el('input', {
+          type: 'checkbox', checked: slot[pair[0]] ? true : null,
+          onchange: function () { slot[pair[0]] = input.checked; save(); },
+        });
+        dutyBox.appendChild(el('label', {}, [input, pair[1]]));
+      });
+      grid.appendChild(el('fieldset', { class: 'form-grid__full' }, [
+        el('legend', { text: '開店準備・締め作業' }),
+        dutyBox,
+        el('small', { text: '担当できる人(その時間まで居られて、できる設定の人)を必ず1人入れます' }),
+      ]));
+
       const wdBox = el('div', { class: 'check-row' });
       WEEKDAYS.forEach(function (label, i) {
         const input = el('input', {
@@ -780,8 +845,10 @@
   function renderWarnings(box, result) {
     const groups = {
       shortage: { title: '人数が足りない枠', cls: 'notice-error', items: [] },
+      close: { title: '締め作業の担当がいない枠', cls: 'notice-error', items: [] },
+      open: { title: '開店準備の担当がいない枠', cls: 'notice-warn', items: [] },
       leader: { title: 'リーダー要件を満たせない枠', cls: 'notice-warn', items: [] },
-      unmet: { title: '出勤日数が目標に届かないスタッフ', cls: 'notice-warn', items: [] },
+      unmet: { title: '勤務日数が設定どおりにならないスタッフ', cls: 'notice-warn', items: [] },
       setup: { title: '設定の確認', cls: 'notice-warn', items: [] },
     };
     result.warnings.forEach(function (w) {
@@ -833,10 +900,15 @@
           return;
         }
         const ul = el('ul', {}, cell.assigned.map(function (a) {
+          const isCloser = cell.slot.requiresClose && a.canClose && a.coversClose;
+          const isOpener = cell.slot.requiresOpen && a.canOpen && a.coversOpen;
           return el('li', {}, [
             el('span', { class: 'tag ' + (a.role === S.ANY_ROLE ? 'tag-any' : 'tag-role'), text: a.roleLabel }),
             a.name,
-            a.isLeader ? el('span', { class: 'leader-mark', text: ' ★' }) : null,
+            a.isLeader ? el('span', { class: 'leader-mark', text: ' ★', title: 'リーダー' }) : null,
+            isCloser ? el('span', { class: 'duty-mark', text: '締', title: '締め作業' }) : null,
+            isOpener ? el('span', { class: 'duty-mark', text: '開', title: '開店準備' }) : null,
+            a.shortened ? el('small', { class: 'short-time', text: ' ' + a.start + '〜' + a.end }) : null,
             el('small', { text: ' Lv' + a.level }),
           ]);
         }));
@@ -846,6 +918,12 @@
         }
         if (cell.noLeader) {
           td.appendChild(el('div', {}, el('span', { class: 'shortage', text: 'リーダー不在' })));
+        }
+        if (cell.noCloser) {
+          td.appendChild(el('div', {}, el('span', { class: 'shortage', text: '締め作業の担当なし' })));
+        }
+        if (cell.noOpener) {
+          td.appendChild(el('div', {}, el('span', { class: 'shortage', text: '開店準備の担当なし' })));
         }
         tr.appendChild(td);
       });
@@ -859,7 +937,8 @@
     const slots = result.slots;
     const roles = result.roles || [];
     const head = ['スタッフ', 'レベル']
-      .concat(roles.map(function (r) { return r.name; }), ['目標', '実績', '過不足'],
+      .concat(roles.map(function (r) { return r.name; }),
+        ['勤務時間', '締め', '基準', '目標', '実績', '過不足', '公休'],
         slots.map(function (s) { return s.name; }), ['最大連勤']);
     table.appendChild(el('thead', {}, el('tr', {}, head.map(function (h, i) {
       return el('th', { class: i >= 1 ? 'num' : null, text: h });
@@ -875,9 +954,13 @@
           return el('td', { class: 'num', text: row.roles.indexOf(r.id) >= 0 ? '○' : '—' });
         }),
         [
+          el('td', { text: (row.startLimit || row.endLimit) ? (row.startLimit || '') + '〜' + (row.endLimit || '') : '—' }),
+          el('td', { class: 'num', text: row.canClose ? '○' : '—' }),
+          el('td', { text: row.dayCountMode === 'holiday' ? '公休' : '出勤' }),
           el('td', { class: 'num', text: row.targetDays }),
           el('td', { class: 'num', text: row.assignedDays }),
           el('td', { class: 'num' + (row.diff < 0 ? ' diff-minus' : ''), text: row.diff === 0 ? '±0' : (row.diff > 0 ? '+' : '') + row.diff }),
+          el('td', { class: 'num' + (row.dayCountMode === 'holiday' && row.restDays !== row.holidayTarget ? ' diff-minus' : ''), text: row.restDays }),
         ],
         slots.map(function (s) { return el('td', { class: 'num', text: row.bySlot[s.id] || 0 }); }),
         [el('td', { class: 'num', text: row.maxConsecutive })]
@@ -924,6 +1007,8 @@
 
     $('#form-staff').addEventListener('submit', onStaffSubmit);
     $('#btn-staff-cancel').addEventListener('click', resetStaffForm);
+    $('#form-staff').elements.dayCountMode.addEventListener('change', syncDayCountFields);
+    $('#form-staff').elements.holidayDays.addEventListener('input', syncDayCountFields);
     $('#btn-add-dayoff').addEventListener('click', function () {
       const input = $('#staff-dayoff-date');
       const value = input.value;
@@ -933,12 +1018,18 @@
       renderDaysOffChips();
     });
 
-    $('#form-store').addEventListener('input', function (e) {
+    function onStoreFieldChange(e) {
       const name = e.target.name;
       if (!name) return;
       data.store[name] = e.target.value;
       save();
-    });
+      if (name === 'dayCountMode' || name === 'periodStart' || name === 'periodEnd') {
+        syncDayCountFields();
+        renderStaffTable();
+      }
+    }
+    $('#form-store').addEventListener('input', onStoreFieldChange);
+    $('#form-store').addEventListener('change', onStoreFieldChange);
     function setPeriod(offset) {
       const range = monthRange(offset);
       data.store.periodStart = range.start;
@@ -980,6 +1071,7 @@
       data.store.slots.push({
         id: id, name: '時間帯' + (data.store.slots.length + 1), start: '', end: '',
         required: 2, requiredWeekend: null, requiredByRole: {}, leaderLevel: 0,
+        requiresOpen: false, requiresClose: false,
         weekdays: [0, 1, 2, 3, 4, 5, 6],
       });
       // 既存スタッフは新しい時間帯にも対応できる扱いにする

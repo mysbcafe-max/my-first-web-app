@@ -203,3 +203,6 @@ tbody tr:nth-child(even) { background: #fafbfc; }
 
 .period-quick { display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; }
 .period-quick .field-label { margin: 0; }
+
+.duty-mark { color: var(--ok-ink); font-weight: 600; background: var(--ok-bg); border-radius: 3px; padding: 0 0.2rem; }
+.short-time { color: var(--warn-ink); font-weight: 600; }
