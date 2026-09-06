@@ -25,7 +25,7 @@
     <section class="panel" id="tab-generate" role="tabpanel">
       <h2>シフト生成</h2>
       <p class="help">
-        「スタッフ」タブで登録した情報(フロア可否・キッチン可否・レベル・出勤日数・希望休など)と、
+        「スタッフ」タブで登録した情報(できる役割・レベル・出勤日数・希望休など)と、
         「店舗設定」タブの時間帯ごとの必要人数から、1 か月分のシフト表を作ります。
         出勤日数は各スタッフに設定した日数を上限に、できるだけその日数に近づけます。
       </p>
@@ -69,7 +69,7 @@
     <!-- ============ スタッフ ============ -->
     <section class="panel" id="tab-staff" role="tabpanel" hidden>
       <h2>スタッフ</h2>
-      <p class="help">フロア・キッチンのどちらができるか、レベル、この期間に入ってもらう出勤日数を登録します。</p>
+      <p class="help">できる役割(店舗設定で決めた担当)、レベル、この期間に入ってもらう出勤日数を登録します。</p>
 
       <form id="form-staff" class="form-card">
         <input type="hidden" name="id">
@@ -86,12 +86,9 @@
             </select>
           </label>
           <label><span>出勤日数(この期間) <span class="req">*</span></span> <input type="number" name="targetDays" min="0" max="31" step="1" value="20" required> <small>この日数を上限に、できるだけこの日数入れます</small></label>
-          <fieldset>
-            <legend>できる仕事</legend>
-            <div class="check-row">
-              <label><input type="checkbox" name="floor" checked> フロア</label>
-              <label><input type="checkbox" name="kitchen"> キッチン</label>
-            </div>
+          <fieldset class="form-grid__full">
+            <legend>できる役割(担当)</legend>
+            <div class="check-row" id="staff-roles"></div>
           </fieldset>
           <fieldset class="form-grid__full">
             <legend>勤務できる曜日</legend>
@@ -149,8 +146,29 @@
         </div>
       </form>
 
+      <h3>役割(担当)</h3>
+      <p class="help">
+        店舗で分けたい担当を登録します。例) au ショップ: フロア・カウンター・事務 / 飲食店: ホール・キッチン。
+        役割を使わない運用なら、すべて削除しても構いません。
+      </p>
+      <div class="form-actions">
+        <label class="check-inline">業態のひな形
+          <select id="preset-select"></select>
+        </label>
+        <button type="button" class="btn" id="btn-apply-preset">ひな形を適用</button>
+        <span class="status">役割・レベルの呼び方・時間帯をまとめて差し替えます</span>
+      </div>
+      <div id="role-list"></div>
+      <div class="form-actions">
+        <button type="button" class="btn" id="btn-add-role">役割を追加</button>
+      </div>
+
+      <h3>レベルの呼び方</h3>
+      <p class="help">1〜5 の各レベルの呼び方を、店舗の言い方に合わせて変えられます。</p>
+      <div class="form-grid" id="level-labels"></div>
+
       <h3>時間帯(シフト枠)</h3>
-      <p class="help">1 日の中の勤務パターンです。必要人数のうち、フロア・キッチンで必ず確保したい人数を指定できます。</p>
+      <p class="help">1 日の中の勤務パターンです。必要人数のうち、役割ごとに必ず確保したい人数を指定できます。</p>
       <div id="slot-list"></div>
       <div class="form-actions">
         <button type="button" class="btn" id="btn-add-slot">時間帯を追加</button>
@@ -165,6 +183,9 @@
         端末を替えるときや、バックアップを取りたいときは書き出し・読み込みを使ってください。
       </p>
       <div class="form-actions">
+        <label class="check-inline">サンプル
+          <select id="sample-select"></select>
+        </label>
         <button type="button" class="btn" id="btn-sample">サンプルを読み込む</button>
         <button type="button" class="btn" id="btn-export">JSON を書き出す</button>
         <button type="button" class="btn" id="btn-import">JSON を読み込む</button>

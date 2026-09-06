@@ -7,7 +7,8 @@
   'use strict';
 
   const S = window.SingleShiftScheduler;
-  const STORAGE_KEY = 'shift-single/v1';
+  const STORAGE_KEY = 'shift-single/v2';
+  const LEGACY_KEY = 'shift-single/v1';
   const WEEKDAYS = S.WEEKDAY_LABELS;
 
   // ---------------- 小物 ----------------
@@ -69,6 +70,7 @@
 
   function defaultData() {
     const period = thisMonth();
+    const parts = S.presetToStore('aushop');
     return {
       store: {
         name: '',
@@ -76,21 +78,49 @@
         periodEnd: period.end,
         closedWeekdays: [],
         closedDates: [],
-        slots: [
-          { id: 'slot1', name: '早番', start: '09:00', end: '15:00', required: 3, requiredWeekend: null, requiredFloor: 2, requiredKitchen: 1, leaderLevel: 3, weekdays: [0, 1, 2, 3, 4, 5, 6] },
-          { id: 'slot2', name: '遅番', start: '15:00', end: '21:00', required: 3, requiredWeekend: null, requiredFloor: 2, requiredKitchen: 1, leaderLevel: 3, weekdays: [0, 1, 2, 3, 4, 5, 6] },
-        ],
+        roles: parts.roles,
+        levelLabels: parts.levelLabels,
+        slots: parts.slots,
       },
       staff: [],
       options: Object.assign({}, S.DEFAULT_OPTIONS),
     };
   }
 
+  // v1(フロア/キッチン固定)のデータを v2(役割マスタ)に読み替える
+  function migrateV1(parsed) {
+    const roles = [{ id: 'role1', name: 'フロア' }, { id: 'role2', name: 'キッチン' }];
+    const store = Object.assign({}, parsed.store || {});
+    store.roles = roles;
+    store.levelLabels = S.DEFAULT_LEVEL_LABELS.slice();
+    store.slots = (store.slots || []).map(function (slot) {
+      const copy = Object.assign({}, slot);
+      copy.requiredByRole = { role1: slot.requiredFloor || 0, role2: slot.requiredKitchen || 0 };
+      delete copy.requiredFloor;
+      delete copy.requiredKitchen;
+      return copy;
+    });
+    const staff = (parsed.staff || []).map(function (person) {
+      const copy = Object.assign({}, person);
+      copy.roles = [];
+      if (person.floor !== false) copy.roles.push('role1');
+      if (person.kitchen) copy.roles.push('role2');
+      delete copy.floor;
+      delete copy.kitchen;
+      return copy;
+    });
+    return { store: store, staff: staff, options: parsed.options || {} };
+  }
+
   function loadData() {
     try {
-      const raw = localStorage.getItem(STORAGE_KEY);
-      if (!raw) return defaultData();
-      const parsed = JSON.parse(raw);
+      let raw = localStorage.getItem(STORAGE_KEY);
+      let parsed = raw ? JSON.parse(raw) : null;
+      if (!parsed) {
+        const legacy = localStorage.getItem(LEGACY_KEY);
+        if (!legacy) return defaultData();
+        parsed = migrateV1(JSON.parse(legacy));
+      }
       const base = defaultData();
       return {
         store: Object.assign(base.store, parsed.store || {}),
@@ -160,12 +190,33 @@
   // ---------------- スタッフ ----------------
 
   function renderStaffCheckboxes() {
+    const rl = $('#staff-roles');
+    const shownRoles = $$('input[data-group="role"]', rl).map(function (i) { return i.value; });
+    const currentRoles = checkedValues(rl, 'role');
+    rl.textContent = '';
+    if (!data.store.roles.length) {
+      rl.appendChild(el('span', { class: 'status', text: '役割を使わない設定です(「店舗設定」タブで追加できます)' }));
+    } else {
+      data.store.roles.forEach(function (role) {
+        const known = shownRoles.indexOf(role.id) >= 0;
+        rl.appendChild(checkboxLabel('role', role.id, role.name, known ? currentRoles.indexOf(role.id) >= 0 : true));
+      });
+    }
+
     const wd = $('#staff-weekdays');
     const current = wd.children.length ? checkedValues(wd, 'weekday') : null;
     wd.textContent = '';
     WEEKDAYS.forEach(function (label, i) {
       wd.appendChild(checkboxLabel('weekday', i, label, current ? current.indexOf(String(i)) >= 0 : true));
     });
+
+    const levelSelect = $('#form-staff [name=level]');
+    const currentLevel = levelSelect.value || '3';
+    levelSelect.textContent = '';
+    data.store.levelLabels.forEach(function (label, i) {
+      levelSelect.appendChild(el('option', { value: String(i + 1), text: (i + 1) + '(' + label + ')' }));
+    });
+    levelSelect.value = currentLevel;
 
     const sl = $('#staff-slots');
     // 画面に出ていた時間帯だけチェック状態を引き継ぎ、新しく増えた時間帯は「対応できる」にしておく
@@ -206,7 +257,7 @@
     editingDaysOff = [];
     renderDaysOffChips();
     renderStaffCheckboxes();
-    $$('#staff-weekdays input, #staff-slots input').forEach(function (i) { i.checked = true; });
+    $$('#staff-weekdays input, #staff-slots input, #staff-roles input').forEach(function (i) { i.checked = true; });
     $('#staff-form-title').textContent = 'スタッフを追加';
     $('#btn-staff-submit').textContent = '追加';
     $('#btn-staff-cancel').hidden = true;
@@ -218,12 +269,12 @@
     form.elements.name.value = person.name || '';
     form.elements.level.value = String(person.level || 3);
     form.elements.targetDays.value = person.targetDays === undefined ? 20 : person.targetDays;
-    form.elements.floor.checked = person.floor !== false;
-    form.elements.kitchen.checked = !!person.kitchen;
     form.elements.maxConsecutiveDays.value = person.maxConsecutiveDays ? person.maxConsecutiveDays : '';
     form.elements.note.value = person.note || '';
 
     renderStaffCheckboxes();
+    const roleIds = Array.isArray(person.roles) ? person.roles.map(String) : null;
+    $$('#staff-roles input').forEach(function (i) { i.checked = roleIds ? roleIds.indexOf(i.value) >= 0 : true; });
     const wdays = Array.isArray(person.availableWeekdays) ? person.availableWeekdays.map(String) : null;
     $$('#staff-weekdays input').forEach(function (i) { i.checked = wdays ? wdays.indexOf(i.value) >= 0 : true; });
     const slots = Array.isArray(person.availableSlots) ? person.availableSlots.map(String) : null;
@@ -243,10 +294,9 @@
     const form = e.target;
     const name = form.elements.name.value.trim();
     if (!name) return;
-    const floor = form.elements.floor.checked;
-    const kitchen = form.elements.kitchen.checked;
-    if (!floor && !kitchen) {
-      setStatus('#staff-status', 'フロアかキッチンのどちらかは「できる」にしてください');
+    const roles = checkedValues($('#staff-roles'), 'role');
+    if (data.store.roles.length && !roles.length) {
+      setStatus('#staff-status', 'できる役割を 1 つ以上選んでください');
       return;
     }
     const weekdays = checkedValues($('#staff-weekdays'), 'weekday').map(Number);
@@ -263,8 +313,7 @@
       id: form.elements.id.value || nextId('staff', data.staff),
       name: name,
       level: Number(form.elements.level.value),
-      floor: floor,
-      kitchen: kitchen,
+      roles: roles,
       targetDays: Math.max(0, Number(form.elements.targetDays.value) || 0),
       availableWeekdays: weekdays,
       availableSlots: availableSlots,
@@ -289,7 +338,10 @@
       table.appendChild(el('tbody', {}, el('tr', {}, el('td', { class: 'none', text: 'まだスタッフが登録されていません。上のフォームから追加するか、「データ」タブでサンプルを読み込んでください。' }))));
       return;
     }
-    const head = ['名前', 'レベル', 'フロア', 'キッチン', '出勤日数', '勤務曜日', '対応時間帯', '希望休', 'メモ', ''];
+    const head = ['名前', 'レベル'].concat(
+      data.store.roles.map(function (r) { return r.name; }),
+      ['出勤日数', '勤務曜日', '対応時間帯', '希望休', 'メモ', '']
+    );
     table.appendChild(el('thead', {}, el('tr', {}, head.map(function (h) { return el('th', { text: h }); }))));
 
     const slotName = {};
@@ -300,11 +352,15 @@
       const slots = Array.isArray(p.availableSlots) ? p.availableSlots : data.store.slots.map(function (s) { return s.id; });
       const slotText = slots.length === data.store.slots.length ? 'すべて'
         : (slots.map(function (id) { return slotName[id] || id; }).join('・') || 'なし');
+      const personRoles = Array.isArray(p.roles) ? p.roles : data.store.roles.map(function (r) { return r.id; });
       body.appendChild(el('tr', {}, [
         el('td', { text: p.name }),
         el('td', { class: 'num', text: p.level }),
-        el('td', { text: p.floor !== false ? '○' : '—' }),
-        el('td', { text: p.kitchen ? '○' : '—' }),
+      ].concat(
+        data.store.roles.map(function (r) {
+          return el('td', { text: personRoles.indexOf(r.id) >= 0 ? '○' : '—' });
+        }),
+        [
         el('td', { class: 'num', text: (p.targetDays || 0) + '日' }),
         el('td', { text: weekdaysText(p.availableWeekdays) }),
         el('td', { text: slotText }),
@@ -331,7 +387,8 @@
             },
           }),
         ])),
-      ]));
+        ]
+      )));
     });
     table.appendChild(body);
   }
@@ -378,6 +435,84 @@
         }),
       ]));
     });
+  }
+
+  function renderRoles() {
+    const list = $('#role-list');
+    list.textContent = '';
+    if (!data.store.roles.length) {
+      list.appendChild(el('p', { class: 'slot-empty', text: '役割なし(誰でもどの枠にも入れる設定です)' }));
+      return;
+    }
+    const grid = el('div', { class: 'form-grid' });
+    data.store.roles.forEach(function (role, index) {
+      const input = el('input', { type: 'text', value: role.name, placeholder: '役割名' });
+      input.addEventListener('input', function () {
+        role.name = input.value;
+        save();
+      });
+      input.addEventListener('change', function () {
+        renderSlots();
+        renderStaffTable();
+      });
+      const remove = el('button', {
+        type: 'button', class: 'btn btn-small btn-danger', text: '削除',
+        onclick: function () {
+          if (!window.confirm('役割「' + role.name + '」を削除しますか?(スタッフ・時間帯の設定からも外れます)')) return;
+          data.store.roles.splice(index, 1);
+          data.store.slots.forEach(function (slot) {
+            if (slot.requiredByRole) delete slot.requiredByRole[role.id];
+          });
+          data.staff.forEach(function (p) {
+            if (Array.isArray(p.roles)) p.roles = p.roles.filter(function (id) { return id !== role.id; });
+          });
+          save(); renderRoles(); renderSlots(); renderStaffCheckboxes(); renderStaffTable();
+        },
+      });
+      grid.appendChild(el('label', {}, ['役割 ' + (index + 1), el('div', { class: 'chip-input' }, [input, remove])]));
+    });
+    list.appendChild(grid);
+  }
+
+  function renderLevelLabels() {
+    const box = $('#level-labels');
+    box.textContent = '';
+    data.store.levelLabels.forEach(function (label, i) {
+      const input = el('input', { type: 'text', value: label, placeholder: S.DEFAULT_LEVEL_LABELS[i] });
+      input.addEventListener('input', function () {
+        data.store.levelLabels[i] = input.value;
+        save();
+      });
+      box.appendChild(el('label', {}, ['レベル' + (i + 1), input]));
+    });
+  }
+
+  function renderPresetOptions() {
+    const presetSelect = $('#preset-select');
+    const sampleSelect = $('#sample-select');
+    presetSelect.textContent = '';
+    sampleSelect.textContent = '';
+    Object.keys(S.PRESETS).forEach(function (key) {
+      presetSelect.appendChild(el('option', { value: key, text: S.PRESETS[key].label }));
+      sampleSelect.appendChild(el('option', { value: key, text: S.PRESETS[key].label }));
+    });
+  }
+
+  // ひな形の適用: 役割・レベルの呼び方・時間帯を差し替える(スタッフはそのまま残す)
+  function applyPreset(key) {
+    const parts = S.presetToStore(key);
+    data.store.roles = parts.roles;
+    data.store.levelLabels = parts.levelLabels;
+    data.store.slots = parts.slots;
+    const roleIds = parts.roles.map(function (r) { return r.id; });
+    const slotIds = parts.slots.map(function (s) { return s.id; });
+    data.staff.forEach(function (p) {
+      p.roles = Array.isArray(p.roles) ? p.roles.filter(function (id) { return roleIds.indexOf(id) >= 0; }) : roleIds.slice();
+      if (!p.roles.length) p.roles = roleIds.slice();
+      p.availableSlots = slotIds.slice();
+    });
+    save();
+    renderAll();
   }
 
   function renderSlots() {
@@ -431,9 +566,21 @@
         field('終了', bind('end', 'time')),
         field('必要人数(平日)', bind('required', 'number', { min: '0', max: '30', step: '1' })),
         field('必要人数(土日)', bind('requiredWeekend', 'number', { min: '0', max: '30', step: '1', placeholder: '平日と同じ' }), '空欄なら平日と同じ'),
-        field('うちフロア必須', bind('requiredFloor', 'number', { min: '0', max: '30', step: '1' })),
-        field('うちキッチン必須', bind('requiredKitchen', 'number', { min: '0', max: '30', step: '1' })),
       ]);
+
+      // 役割ごとの必須人数
+      slot.requiredByRole = slot.requiredByRole || {};
+      data.store.roles.forEach(function (role) {
+        const input = el('input', {
+          type: 'number', min: '0', max: '30', step: '1',
+          value: slot.requiredByRole[role.id] === undefined ? 0 : slot.requiredByRole[role.id],
+        });
+        input.addEventListener('input', function () {
+          slot.requiredByRole[role.id] = Math.max(0, Number(input.value) || 0);
+          save();
+        });
+        grid.appendChild(el('label', {}, ['うち' + role.name + '必須', input]));
+      });
 
       const leader = el('select', {}, [0, 1, 2, 3, 4, 5].map(function (lv) {
         return el('option', { value: String(lv), selected: Number(slot.leaderLevel || 0) === lv ? true : null, text: lv === 0 ? '指定なし' : 'レベル' + lv + '以上を 1 名' });
@@ -596,7 +743,7 @@
         }
         const ul = el('ul', {}, cell.assigned.map(function (a) {
           return el('li', {}, [
-            el('span', { class: 'tag tag-' + a.role, text: S.ROLE_LABELS[a.role] }),
+            el('span', { class: 'tag ' + (a.role === S.ANY_ROLE ? 'tag-any' : 'tag-role'), text: a.roleLabel }),
             a.name,
             a.isLeader ? el('span', { class: 'leader-mark', text: ' ★' }) : null,
             el('small', { text: ' Lv' + a.level }),
@@ -619,8 +766,10 @@
   function renderStaffResult(result) {
     const table = $('#result-staff');
     const slots = result.slots;
-    const head = ['スタッフ', 'レベル', 'フロア', 'キッチン', '目標', '実績', '過不足']
-      .concat(slots.map(function (s) { return s.name; }), ['最大連勤']);
+    const roles = result.roles || [];
+    const head = ['スタッフ', 'レベル']
+      .concat(roles.map(function (r) { return r.name; }), ['目標', '実績', '過不足'],
+        slots.map(function (s) { return s.name; }), ['最大連勤']);
     table.appendChild(el('thead', {}, el('tr', {}, head.map(function (h, i) {
       return el('th', { class: i >= 1 ? 'num' : null, text: h });
     }))));
@@ -630,12 +779,15 @@
       body.appendChild(el('tr', {}, [
         el('td', { text: row.name }),
         el('td', { class: 'num', text: row.level }),
-        el('td', { class: 'num', text: row.floor ? '○' : '—' }),
-        el('td', { class: 'num', text: row.kitchen ? '○' : '—' }),
-        el('td', { class: 'num', text: row.targetDays }),
-        el('td', { class: 'num', text: row.assignedDays }),
-        el('td', { class: 'num' + (row.diff < 0 ? ' diff-minus' : ''), text: row.diff === 0 ? '±0' : (row.diff > 0 ? '+' : '') + row.diff }),
       ].concat(
+        roles.map(function (r) {
+          return el('td', { class: 'num', text: row.roles.indexOf(r.id) >= 0 ? '○' : '—' });
+        }),
+        [
+          el('td', { class: 'num', text: row.targetDays }),
+          el('td', { class: 'num', text: row.assignedDays }),
+          el('td', { class: 'num' + (row.diff < 0 ? ' diff-minus' : ''), text: row.diff === 0 ? '±0' : (row.diff > 0 ? '+' : '') + row.diff }),
+        ],
         slots.map(function (s) { return el('td', { class: 'num', text: row.bySlot[s.id] || 0 }); }),
         [el('td', { class: 'num', text: row.maxConsecutive })]
       )));
@@ -664,6 +816,8 @@
 
   function renderAll() {
     renderStoreForm();
+    renderRoles();
+    renderLevelLabels();
     renderSlots();
     renderStaffCheckboxes();
     renderStaffTable();
@@ -673,6 +827,7 @@
 
   function init() {
     initTabs();
+    renderPresetOptions();
 
     $('#form-staff').addEventListener('submit', onStaffSubmit);
     $('#btn-staff-cancel').addEventListener('click', resetStaffForm);
@@ -701,11 +856,26 @@
       save();
       renderClosedDates();
     });
+    $('#btn-add-role').addEventListener('click', function () {
+      const id = nextId('role', data.store.roles);
+      data.store.roles.push({ id: id, name: '役割' + (data.store.roles.length + 1) });
+      // 既存スタッフは新しい役割もできる扱いにする
+      data.staff.forEach(function (p) {
+        if (Array.isArray(p.roles)) p.roles.push(id);
+      });
+      save(); renderRoles(); renderSlots(); renderStaffCheckboxes(); renderStaffTable();
+    });
+    $('#btn-apply-preset').addEventListener('click', function () {
+      const key = $('#preset-select').value;
+      if (!window.confirm('「' + S.PRESETS[key].label + '」のひな形で、役割・レベルの呼び方・時間帯を差し替えます。よろしいですか?')) return;
+      applyPreset(key);
+      setStatus('#data-status', '');
+    });
     $('#btn-add-slot').addEventListener('click', function () {
       const id = nextId('slot', data.store.slots);
       data.store.slots.push({
         id: id, name: '時間帯' + (data.store.slots.length + 1), start: '', end: '',
-        required: 2, requiredWeekend: null, requiredFloor: 1, requiredKitchen: 0, leaderLevel: 0,
+        required: 2, requiredWeekend: null, requiredByRole: {}, leaderLevel: 0,
         weekdays: [0, 1, 2, 3, 4, 5, 6],
       });
       // 既存スタッフは新しい時間帯にも対応できる扱いにする
@@ -728,7 +898,7 @@
 
     $('#btn-sample').addEventListener('click', function () {
       if (data.staff.length && !window.confirm('いまの内容をサンプルで置き換えますか?')) return;
-      const sample = S.sampleData();
+      const sample = S.sampleData($('#sample-select').value);
       data.store = sample.store;
       data.staff = sample.staff;
       save();

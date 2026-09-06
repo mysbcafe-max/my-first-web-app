@@ -15,10 +15,8 @@
   --error-ink: #991b1b;
   --info-bg: #e0f2fe;
   --info-ink: #075985;
-  --floor-bg: #eff6ff;
-  --floor-ink: #1d4ed8;
-  --kitchen-bg: #fff7ed;
-  --kitchen-ink: #9a3412;
+  --role-bg: #eff6ff;
+  --role-ink: #1d4ed8;
   --weekend-bg: #fdf2f8;
   --sat-ink: #1d4ed8;
   --sun-ink: #be123c;
@@ -135,8 +133,7 @@ tbody tr:nth-child(even) { background: #fafbfc; }
 .matrix li { white-space: nowrap; }
 
 .tag { display: inline-block; padding: 0 0.35rem; border-radius: 4px; font-size: 0.75rem; margin-right: 0.25rem; }
-.tag-floor { background: var(--floor-bg); color: var(--floor-ink); }
-.tag-kitchen { background: var(--kitchen-bg); color: var(--kitchen-ink); }
+.tag-role { background: var(--role-bg); color: var(--role-ink); }
 .tag-any { background: #f1f5f9; color: var(--muted); }
 .tag-lv { background: #f1f5f9; color: var(--muted); }
 .leader-mark { color: var(--warn-ink); font-weight: 600; }

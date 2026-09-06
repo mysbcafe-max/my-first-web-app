@@ -4,9 +4,14 @@
  * ブラウザでは window.SingleShiftScheduler として、Node では module.exports として使える。
  * 外部ライブラリ・外部 API には依存しない(費用ゼロ)。
  *
+ * 「役割(担当)」は店舗ごとに自由に定義する。
+ *   例) au ショップ: フロア / カウンター / 事務
+ *       飲食店     : ホール / キッチン
+ *       小売       : レジ / 売場
+ *
  * 入力
- *   store : 店舗設定(期間・定休日・時間帯(枠)ごとの必要人数)
- *   staff : スタッフ一覧(フロア可否・キッチン可否・レベル・出勤日数 など)
+ *   store : 店舗設定(期間・定休日・役割・時間帯(枠)ごとの必要人数)
+ *   staff : スタッフ一覧(できる役割・レベル・出勤日数 など)
  * 出力
  *   日付 × 時間帯のアサイン表と、スタッフ別の集計・警告
  */
@@ -21,15 +26,50 @@
 
   const WEEKDAY_LABELS = ['日', '月', '火', '水', '木', '金', '土'];
 
-  // 枠の中の「担当」。フロア必須・キッチン必須の人数を満たしたあとの残りは any(どちらでも可)。
-  const ROLE_LABELS = { floor: 'フロア', kitchen: 'キッチン', any: '—' };
+  // 役割を指定しない枠(誰でもよい)の表示
+  const ANY_ROLE = 'any';
+  const ANY_ROLE_LABEL = '—';
 
-  const LEVEL_LABELS = {
-    1: '1(研修中)',
-    2: '2(一人立ち)',
-    3: '3(中堅)',
-    4: '4(リーダー)',
-    5: '5(店長代行)',
+  const DEFAULT_LEVEL_LABELS = ['研修中', '一人立ち', '中堅', 'リーダー', '店長代行'];
+
+  // 業態別のひな形。店舗設定に流し込んで使う
+  const PRESETS = {
+    aushop: {
+      label: 'au ショップ / 携帯ショップ',
+      roles: ['フロア', 'カウンター', '事務'],
+      levelLabels: ['研修中', '一人立ち', '一通り対応可', 'リーダー', '店長代行'],
+      slots: [
+        { name: '早番', start: '09:30', end: '18:30', required: 3, requiredWeekend: 4, byRole: [1, 2, 0], leaderLevel: 4 },
+        { name: '遅番', start: '10:30', end: '19:30', required: 3, requiredWeekend: 4, byRole: [1, 2, 0], leaderLevel: 3 },
+      ],
+    },
+    restaurant: {
+      label: '飲食店・カフェ',
+      roles: ['ホール', 'キッチン'],
+      levelLabels: ['研修中', '一人立ち', '中堅', 'リーダー', '店長代行'],
+      slots: [
+        { name: '早番', start: '08:00', end: '15:00', required: 3, requiredWeekend: 4, byRole: [2, 1], leaderLevel: 3 },
+        { name: '遅番', start: '14:00', end: '21:00', required: 3, requiredWeekend: 4, byRole: [2, 1], leaderLevel: 3 },
+      ],
+    },
+    retail: {
+      label: '小売・アパレル',
+      roles: ['レジ', '売場'],
+      levelLabels: ['研修中', '一人立ち', '中堅', 'リーダー', '店長代行'],
+      slots: [
+        { name: '早番', start: '09:00', end: '15:00', required: 2, requiredWeekend: 3, byRole: [1, 1], leaderLevel: 3 },
+        { name: '遅番', start: '14:00', end: '20:00', required: 2, requiredWeekend: 3, byRole: [1, 1], leaderLevel: 2 },
+      ],
+    },
+    simple: {
+      label: '役割を分けない',
+      roles: [],
+      levelLabels: DEFAULT_LEVEL_LABELS.slice(),
+      slots: [
+        { name: '早番', start: '09:00', end: '15:00', required: 2, requiredWeekend: 2, byRole: [], leaderLevel: 3 },
+        { name: '遅番', start: '15:00', end: '21:00', required: 2, requiredWeekend: 2, byRole: [], leaderLevel: 2 },
+      ],
+    },
   };
 
   const DEFAULT_OPTIONS = {
@@ -107,10 +147,39 @@
 
   // ---------------- 入力の正規化 ----------------
 
-  function normalizeSlot(raw, i) {
+  function normalizeRoles(raw) {
+    if (!Array.isArray(raw)) return [];
+    const seen = {};
+    const out = [];
+    raw.forEach((r, i) => {
+      const src = typeof r === 'string' ? { id: 'role' + (i + 1), name: r } : (r || {});
+      const id = String(src.id || 'role' + (i + 1));
+      if (seen[id]) return;
+      seen[id] = true;
+      out.push({ id: id, name: String(src.name || '役割' + (i + 1)) });
+    });
+    return out;
+  }
+
+  function normalizeLevelLabels(raw) {
+    const out = DEFAULT_LEVEL_LABELS.slice();
+    if (Array.isArray(raw)) {
+      raw.slice(0, 5).forEach((label, i) => {
+        const s = String(label || '').trim();
+        if (s) out[i] = s;
+      });
+    }
+    return out;
+  }
+
+  function normalizeSlot(raw, i, roles) {
     const src = raw || {};
     const required = Math.max(0, toInt(src.required, 0));
     const rw = src.requiredWeekend;
+    const requiredByRole = {};
+    roles.forEach((role) => {
+      requiredByRole[role.id] = Math.max(0, toInt((src.requiredByRole || {})[role.id], 0));
+    });
     return {
       id: String(src.id || 'slot' + (i + 1)),
       name: String(src.name || '枠' + (i + 1)),
@@ -119,8 +188,7 @@
       required: required,
       // 土日の必要人数(未入力なら平日と同じ)
       requiredWeekend: rw === '' || rw === null || rw === undefined ? null : Math.max(0, toInt(rw, required)),
-      requiredFloor: Math.max(0, toInt(src.requiredFloor, 0)),
-      requiredKitchen: Math.max(0, toInt(src.requiredKitchen, 0)),
+      requiredByRole: requiredByRole,
       leaderLevel: clamp(toInt(src.leaderLevel, 0), 0, 5),
       weekdays: normalizeWeekdays(src.weekdays, [0, 1, 2, 3, 4, 5, 6]),
     };
@@ -128,30 +196,35 @@
 
   function normalizeStore(raw) {
     const src = raw || {};
-    const slots = (Array.isArray(src.slots) ? src.slots : []).map(normalizeSlot);
+    const roles = normalizeRoles(src.roles);
     return {
       name: String(src.name || '店舗'),
       periodStart: String(src.periodStart || ''),
       periodEnd: String(src.periodEnd || ''),
       closedWeekdays: normalizeWeekdays(src.closedWeekdays, []),
       closedDates: normalizeDates(src.closedDates),
-      slots: slots,
+      roles: roles,
+      levelLabels: normalizeLevelLabels(src.levelLabels),
+      slots: (Array.isArray(src.slots) ? src.slots : []).map((s, i) => normalizeSlot(s, i, roles)),
     };
   }
 
-  function normalizeStaff(raw, slotIds) {
+  function normalizeStaff(raw, slotIds, roleIds) {
     return (Array.isArray(raw) ? raw : []).map((src, i) => {
       const s = src || {};
       const availableSlots = Array.isArray(s.availableSlots)
         ? s.availableSlots.map(String).filter((id) => slotIds.indexOf(id) >= 0)
         : slotIds.slice();
+      // roles が未指定なら「すべての役割ができる」扱い
+      const roles = Array.isArray(s.roles)
+        ? s.roles.map(String).filter((id) => roleIds.indexOf(id) >= 0)
+        : roleIds.slice();
       return {
         id: String(s.id || 'staff' + (i + 1)),
         name: String(s.name || '(名前なし)'),
         level: clamp(toInt(s.level, 1), 1, 5),
-        floor: s.floor === undefined ? true : !!s.floor,      // フロアができるか
-        kitchen: s.kitchen === undefined ? false : !!s.kitchen, // キッチンができるか
-        targetDays: Math.max(0, toInt(s.targetDays, 0)),        // 期間内の出勤日数(目標かつ上限)
+        roles: roles,                                            // できる役割(担当)
+        targetDays: Math.max(0, toInt(s.targetDays, 0)),         // 期間内の出勤日数(目標かつ上限)
         availableWeekdays: normalizeWeekdays(s.availableWeekdays, [0, 1, 2, 3, 4, 5, 6]),
         availableSlots: availableSlots,
         daysOff: normalizeDates(s.daysOff),
@@ -168,15 +241,13 @@
     return wd === 0 || wd === 6;
   }
 
-  function requiredOf(slot, date) {
-    const base = isWeekend(date) && slot.requiredWeekend !== null ? slot.requiredWeekend : slot.required;
-    return Math.max(base, slot.requiredFloor + slot.requiredKitchen);
+  function roleSum(slot) {
+    return Object.keys(slot.requiredByRole).reduce((n, k) => n + slot.requiredByRole[k], 0);
   }
 
-  function canServe(staff, role) {
-    if (role === 'floor') return staff.floor;
-    if (role === 'kitchen') return staff.kitchen;
-    return staff.floor || staff.kitchen;
+  function requiredOf(slot, date) {
+    const base = isWeekend(date) && slot.requiredWeekend !== null ? slot.requiredWeekend : slot.required;
+    return Math.max(base, roleSum(slot));
   }
 
   function csvEscape(v) {
@@ -190,7 +261,15 @@
     const opts = Object.assign({}, DEFAULT_OPTIONS, (input && input.options) || {});
     const store = normalizeStore(input && input.store);
     const slots = store.slots;
-    const staff = normalizeStaff(input && input.staff, slots.map((s) => s.id));
+    const roles = store.roles;
+    const roleIds = roles.map((r) => r.id);
+    const staff = normalizeStaff(input && input.staff, slots.map((s) => s.id), roleIds);
+
+    const roleNameOf = {};
+    roles.forEach((r) => { roleNameOf[r.id] = r.name; });
+    function roleLabel(roleId) {
+      return roleId === ANY_ROLE ? ANY_ROLE_LABEL : (roleNameOf[roleId] || roleId);
+    }
 
     const errors = [];
     const setupWarnings = [];
@@ -203,23 +282,23 @@
     if (!slots.length) errors.push('時間帯(シフト枠)を 1 つ以上登録してください。');
     if (!staff.length) errors.push('スタッフを 1 人以上登録してください。');
     if (errors.length) {
-      return { ok: false, errors: errors, store: store, days: [], staffSummary: [], warnings: [], stats: null };
+      return { ok: false, errors: errors, store: store, roles: roles, slots: slots, days: [], staffSummary: [], warnings: [], stats: null };
     }
 
     // 設定の穴を先に知らせる
     slots.forEach((slot) => {
-      if (slot.required < slot.requiredFloor + slot.requiredKitchen) {
+      const sum = roleSum(slot);
+      if (slot.required < sum) {
         setupWarnings.push({
           type: 'setup',
-          message: '「' + slot.name + '」は必要人数(' + slot.required + '人)がフロア必須+キッチン必須('
-            + (slot.requiredFloor + slot.requiredKitchen) + '人)より少ないため、'
-            + (slot.requiredFloor + slot.requiredKitchen) + '人として扱います。',
+          message: '「' + slot.name + '」は必要人数(' + slot.required + '人)が役割ごとの必須人数の合計('
+            + sum + '人)より少ないため、' + sum + '人として扱います。',
         });
       }
     });
     staff.forEach((s) => {
-      if (!s.floor && !s.kitchen) {
-        setupWarnings.push({ type: 'setup', message: s.name + ' はフロアもキッチンも「不可」のため、シフトに入れられません。' });
+      if (roles.length && !s.roles.length) {
+        setupWarnings.push({ type: 'setup', message: s.name + ' はできる役割が 1 つも選ばれていないため、シフトに入れられません。' });
       }
       if (!s.availableSlots.length) {
         setupWarnings.push({ type: 'setup', message: s.name + ' は対応できる時間帯が 1 つも選ばれていません。' });
@@ -231,6 +310,13 @@
 
     const staffById = {};
     staff.forEach((s) => { staffById[s.id] = s; });
+
+    // 役割を使わない設定(roles が空)のときは、誰でもどの枠にも入れる
+    function canServe(s, roleId) {
+      if (!roles.length) return true;
+      if (roleId === ANY_ROLE) return s.roles.length > 0;
+      return s.roles.indexOf(roleId) >= 0;
+    }
 
     const allDates = eachDate(store.periodStart, store.periodEnd);
 
@@ -260,6 +346,7 @@
         assigned: 0,
         dates: new Set(),
         slotCount: {},
+        roleCount: {},
         passed: 0,        // 「入れたのに入らなかった日」= 残り機会の目減り
         availableTotal: 0,
       };
@@ -267,7 +354,7 @@
 
     // その日にそのスタッフが働ける枠があるか(人数上限などは見ない、素の可否)
     function couldWorkDay(s, day) {
-      if (!s.floor && !s.kitchen) return false;
+      if (roles.length && !s.roles.length) return false;
       if (s.availableWeekdays.indexOf(day.weekday) < 0) return false;
       if (s.daysOff.indexOf(day.date) >= 0) return false;
       return day.cells.some((cell) => s.availableSlots.indexOf(cell.slot.id) >= 0);
@@ -300,7 +387,7 @@
 
     // 入れない理由(入れるなら null)
     function blockedReason(s, cell, date) {
-      if (!s.floor && !s.kitchen) return 'role';
+      if (roles.length && !s.roles.length) return 'norole';
       if (s.availableWeekdays.indexOf(weekdayOf(date)) < 0) return 'weekday';
       if (s.daysOff.indexOf(date) >= 0) return 'dayoff';
       if (s.availableSlots.indexOf(cell.slot.id) < 0) return 'slot';
@@ -313,14 +400,14 @@
     }
 
     const REASON_LABELS = {
-      role: 'フロアもキッチンも不可',
+      norole: 'できる役割が未設定',
       weekday: '勤務できない曜日',
       dayoff: '希望休',
       slot: 'この時間帯に対応できない',
       sameday: '同じ日の別の枠に勤務',
       target: '出勤日数の上限に到達',
       consecutive: '連勤上限',
-      capability: '担当(フロア/キッチン)が合わない',
+      capability: 'この役割ができない',
     };
 
     function candidatesFor(cell, date, role, tally) {
@@ -383,10 +470,14 @@
 
     function assign(s, cell, date, role, isLeader) {
       const st = state[s.id];
-      cell.assigned.push({ id: s.id, name: s.name, level: s.level, role: role, isLeader: !!isLeader });
+      cell.assigned.push({
+        id: s.id, name: s.name, level: s.level, role: role,
+        roleLabel: roleLabel(role), isLeader: !!isLeader,
+      });
       st.assigned += 1;
       st.dates.add(date);
       st.slotCount[cell.slot.id] = (st.slotCount[cell.slot.id] || 0) + 1;
+      st.roleCount[role] = (st.roleCount[role] || 0) + 1;
     }
 
     function unassign(s, cell) {
@@ -395,6 +486,7 @@
       if (idx < 0) return null;
       const removed = cell.assigned.splice(idx, 1)[0];
       st.slotCount[cell.slot.id] -= 1;
+      st.roleCount[removed.role] -= 1;
       return removed;
     }
 
@@ -402,18 +494,19 @@
     function fillCell(cell, date) {
       const slot = cell.slot;
       const demands = [];
-      for (let i = 0; i < slot.requiredFloor; i += 1) demands.push('floor');
-      for (let i = 0; i < slot.requiredKitchen; i += 1) demands.push('kitchen');
-      while (demands.length < cell.required) demands.push('any');
+      roles.forEach((role) => {
+        for (let i = 0; i < (slot.requiredByRole[role.id] || 0); i += 1) demands.push(role.id);
+      });
+      while (demands.length < cell.required) demands.push(ANY_ROLE);
 
-      // 候補が少ない担当から埋める(あとから埋まらなくなるのを防ぐ)
+      // 候補が少ない役割から埋める(あとから埋まらなくなるのを防ぐ)
       const scarcity = {};
-      ['floor', 'kitchen', 'any'].forEach((role) => {
-        scarcity[role] = candidatesFor(cell, date, role, null).length;
+      demands.concat([ANY_ROLE]).forEach((role) => {
+        if (scarcity[role] === undefined) scarcity[role] = candidatesFor(cell, date, role, null).length;
       });
       demands.sort((a, b) => (scarcity[a] - scarcity[b]) || (a < b ? -1 : a > b ? 1 : 0));
 
-      // リーダー要件: 担当できる中で「いちばん候補が少ない担当」に入れる
+      // リーダー要件: 担当できる中で「いちばん候補が少ない役割」に入れる
       if (slot.leaderLevel > 0) {
         let placed = false;
         for (let i = 0; i < demands.length && !placed; i += 1) {
@@ -432,7 +525,7 @@
         const tally = {};
         const cands = candidatesFor(cell, date, role, tally);
         if (!cands.length) {
-          cell.unfilled.push({ role: role, reasons: tally });
+          cell.unfilled.push({ role: role, roleLabel: roleLabel(role), reasons: tally });
           return;
         }
         const best = pickBest(cands, cell, date);
@@ -455,8 +548,7 @@
           const leadB = other.slot.leaderLevel;
           const otherKeepsLeader = leadB <= 0
             || other.assigned.some((o) => o.id !== a.id && o.level >= leadB);
-          const tally = {};
-          const cands = candidatesFor(other, day.date, a.role, tally)
+          const cands = candidatesFor(other, day.date, a.role, null)
             .filter((y) => otherKeepsLeader || y.level >= leadB);
           if (!cands.length) continue;
           const y = pickBest(cands, other, day.date);
@@ -486,6 +578,12 @@
       }
     }
 
+    function dayDifficulty(day) {
+      const required = day.cells.reduce((n, c) => n + c.required, 0);
+      const cands = staff.filter((s) => couldWorkDay(s, day) && s.targetDays > 0).length;
+      return cands === 0 ? Infinity : required / cands;
+    }
+
     // 埋めにくい日から順に処理する(候補に対して必要人数が多い日 = 土日など)
     const order = openDays.slice().sort((a, b) => {
       const da = dayDifficulty(a);
@@ -493,12 +591,6 @@
       if (da !== db) return db - da;
       return a.date < b.date ? -1 : 1;
     });
-
-    function dayDifficulty(day) {
-      const required = day.cells.reduce((n, c) => n + c.required, 0);
-      const cands = staff.filter((s) => couldWorkDay(s, day) && s.targetDays > 0).length;
-      return cands === 0 ? Infinity : required / cands;
-    }
 
     order.forEach((day) => {
       // 候補が少ない枠から埋める
@@ -530,7 +622,7 @@
             Object.keys(u.reasons).forEach((k) => { reasons[k] = Math.max(reasons[k] || 0, u.reasons[k]); });
           });
           const roleText = Object.keys(byRole)
-            .map((r) => (r === 'any' ? '' : ROLE_LABELS[r]) + byRole[r] + '人')
+            .map((r) => (r === ANY_ROLE ? '' : roleLabel(r)) + byRole[r] + '人')
             .join('、');
           const reasonText = Object.keys(reasons)
             .sort((a, b) => reasons[b] - reasons[a])
@@ -571,12 +663,13 @@
         id: s.id,
         name: s.name,
         level: s.level,
-        floor: s.floor,
-        kitchen: s.kitchen,
+        roles: s.roles.slice(),
+        roleNames: s.roles.map((id) => roleNameOf[id] || id),
         targetDays: s.targetDays,
         assignedDays: st.assigned,
         diff: st.assigned - s.targetDays,
         bySlot: Object.assign({}, st.slotCount),
+        byRole: Object.assign({}, st.roleCount),
         maxConsecutive: maxRun,
         dates: dates,
       };
@@ -599,6 +692,7 @@
       ok: true,
       errors: [],
       store: store,
+      roles: roles,
       slots: slots,
       days: days,
       staffSummary: staffSummary,
@@ -627,11 +721,11 @@
       day.cells.forEach((cell) => {
         cell.assigned.forEach((a) => {
           rows.push([day.date, day.weekdayLabel, cell.slot.name, cell.slot.start, cell.slot.end,
-            ROLE_LABELS[a.role] || '', a.name + (a.isLeader ? '(リーダー)' : ''), a.level]);
+            a.roleLabel, a.name + (a.isLeader ? '(リーダー)' : ''), a.level]);
         });
         cell.unfilled.forEach((u) => {
           rows.push([day.date, day.weekdayLabel, cell.slot.name, cell.slot.start, cell.slot.end,
-            ROLE_LABELS[u.role] || '', '(不足)', '']);
+            u.roleLabel, '(不足)', '']);
         });
       });
     });
@@ -640,14 +734,18 @@
 
   function toCsvByStaff(result) {
     const slots = result.slots || [];
-    const header = ['スタッフ', 'レベル', 'フロア', 'キッチン', '目標出勤日数', '実績', '過不足']
-      .concat(slots.map((s) => s.name), ['出勤日']);
+    const roles = result.roles || [];
+    const header = ['スタッフ', 'レベル']
+      .concat(roles.map((r) => r.name), ['目標出勤日数', '実績', '過不足'], slots.map((s) => s.name), ['出勤日']);
     const rows = [header];
     result.staffSummary.forEach((row) => {
-      rows.push([
-        row.name, row.level, row.floor ? '可' : '不可', row.kitchen ? '可' : '不可',
-        row.targetDays, row.assignedDays, row.diff,
-      ].concat(slots.map((s) => row.bySlot[s.id] || 0), [row.dates.join(' ')]));
+      rows.push([row.name, row.level]
+        .concat(
+          roles.map((r) => (row.roles.indexOf(r.id) >= 0 ? '可' : '不可')),
+          [row.targetDays, row.assignedDays, row.diff],
+          slots.map((s) => row.bySlot[s.id] || 0),
+          [row.dates.join(' ')]
+        ));
     });
     return rows.map((r) => r.map(csvEscape).join(',')).join('\n');
   }
@@ -666,43 +764,117 @@
     }));
   }
 
-  // ---------------- サンプルデータ ----------------
+  // ---------------- プリセット・サンプルデータ ----------------
 
-  function sampleData(refDate) {
+  // プリセットの内容を店舗設定の形(roles / levelLabels / slots)に展開する
+  function presetToStore(presetKey) {
+    const preset = PRESETS[presetKey] || PRESETS.simple;
+    const roles = preset.roles.map((name, i) => ({ id: 'role' + (i + 1), name: name }));
+    const slots = preset.slots.map((slot, i) => {
+      const requiredByRole = {};
+      roles.forEach((role, ri) => { requiredByRole[role.id] = slot.byRole[ri] || 0; });
+      return {
+        id: 'slot' + (i + 1),
+        name: slot.name,
+        start: slot.start,
+        end: slot.end,
+        required: slot.required,
+        requiredWeekend: slot.requiredWeekend === undefined ? null : slot.requiredWeekend,
+        requiredByRole: requiredByRole,
+        leaderLevel: slot.leaderLevel,
+        weekdays: [0, 1, 2, 3, 4, 5, 6],
+      };
+    });
+    return { roles: roles, levelLabels: preset.levelLabels.slice(), slots: slots };
+  }
+
+  // プリセットごとのサンプル要員
+  // [名前, レベル, できる役割(index の配列), 出勤日数, 勤務できる曜日(省略で毎日), 対応できる時間帯(index、省略で全部)]
+  const SAMPLE_STAFF = {
+    aushop: [
+      ['佐藤 店長', 5, [0, 1, 2], 20],
+      ['鈴木 副店長', 4, [0, 1, 2], 20],
+      ['高橋 (カウンター)', 4, [0, 1, 2], 20],
+      ['田中 (カウンター)', 3, [0, 1], 20],
+      ['伊藤 (カウンター)', 3, [1], 18, null, [1]],
+      ['木村 (カウンター)', 2, [0, 1], 18],
+      ['渡辺 (フロア)', 2, [0], 18],
+      ['山本 (フロア)', 2, [0, 2], 16],
+      ['中村 (事務)', 3, [0, 2], 14, [1, 2, 3, 4, 5], [0]],
+      ['小林 (学生)', 1, [0], 8, [0, 6]],
+      ['加藤 (新人)', 1, [0], 14],
+    ],
+    restaurant: [
+      ['佐藤 店長', 5, [0, 1], 20],
+      ['鈴木 主任', 4, [0, 1], 20],
+      ['高橋 (ホール)', 3, [0], 18],
+      ['田中 (ホール)', 2, [0], 16, null, [1]],
+      ['伊藤 (キッチン)', 4, [1], 20],
+      ['渡辺 (キッチン)', 3, [1], 18],
+      ['山本 (学生)', 2, [0], 8, [0, 5, 6], [1]],
+      ['中村 (学生)', 1, [0], 8, [0, 6]],
+      ['小林 (主婦)', 3, [0, 1], 12, [1, 2, 3, 4, 5], [0]],
+      ['加藤 (新人)', 1, [0, 1], 14],
+    ],
+    retail: [
+      ['佐藤 店長', 5, [0, 1], 20],
+      ['鈴木 主任', 4, [0, 1], 20],
+      ['高橋', 3, [0, 1], 18],
+      ['田中', 3, [1], 18],
+      ['伊藤', 2, [0], 16],
+      ['渡辺', 2, [1], 14],
+      ['山本 (学生)', 1, [1], 8, [0, 6]],
+      ['中村 (新人)', 1, [0, 1], 12],
+    ],
+    simple: [
+      ['佐藤 店長', 5, [], 20],
+      ['鈴木 主任', 4, [], 20],
+      ['高橋', 3, [], 20],
+      ['田中', 2, [], 18],
+      ['伊藤', 2, [], 18],
+      ['渡辺 (学生)', 1, [], 10, [0, 6]],
+    ],
+  };
+
+  function sampleData(presetKey, refDate) {
+    const key = PRESETS[presetKey] ? presetKey : 'aushop';
     const base = isValidDate(refDate) ? refDate : formatDate(new Date());
     const first = base.slice(0, 8) + '01';
     const last = addDays(addDays(first, 32).slice(0, 8) + '01', -1);
+    const parts = presetToStore(key);
     const store = {
-      name: 'カフェ 本店',
+      name: PRESETS[key].label + ' 〇〇店',
       periodStart: first,
       periodEnd: last,
-      closedWeekdays: [2],
+      closedWeekdays: key === 'restaurant' ? [2] : [],
       closedDates: [],
-      slots: [
-        { id: 'early', name: '早番', start: '08:00', end: '15:00', required: 3, requiredWeekend: 4, requiredFloor: 2, requiredKitchen: 1, leaderLevel: 3, weekdays: [0, 1, 2, 3, 4, 5, 6] },
-        { id: 'late', name: '遅番', start: '14:00', end: '21:00', required: 3, requiredWeekend: 4, requiredFloor: 2, requiredKitchen: 1, leaderLevel: 3, weekdays: [0, 1, 2, 3, 4, 5, 6] },
-      ],
+      roles: parts.roles,
+      levelLabels: parts.levelLabels,
+      slots: parts.slots,
     };
-    const staff = [
-      { id: 'p1', name: '佐藤 店長', level: 5, floor: true, kitchen: true, targetDays: 20, availableSlots: ['early', 'late'] },
-      { id: 'p2', name: '鈴木 主任', level: 4, floor: true, kitchen: true, targetDays: 20, availableSlots: ['early', 'late'] },
-      { id: 'p3', name: '高橋 (ホール)', level: 3, floor: true, kitchen: false, targetDays: 18, availableSlots: ['early', 'late'] },
-      { id: 'p4', name: '田中 (ホール)', level: 2, floor: true, kitchen: false, targetDays: 16, availableSlots: ['late'] },
-      { id: 'p5', name: '伊藤 (キッチン)', level: 4, floor: false, kitchen: true, targetDays: 20, availableSlots: ['early', 'late'] },
-      { id: 'p6', name: '渡辺 (キッチン)', level: 3, floor: false, kitchen: true, targetDays: 18, availableSlots: ['early', 'late'] },
-      { id: 'p7', name: '山本 (学生)', level: 2, floor: true, kitchen: false, targetDays: 8, availableWeekdays: [0, 5, 6], availableSlots: ['late'] },
-      { id: 'p8', name: '中村 (学生)', level: 1, floor: true, kitchen: false, targetDays: 8, availableWeekdays: [0, 6], availableSlots: ['early', 'late'] },
-      { id: 'p9', name: '小林 (主婦)', level: 3, floor: true, kitchen: true, targetDays: 12, availableWeekdays: [1, 2, 3, 4, 5], availableSlots: ['early'] },
-      { id: 'p10', name: '加藤 (新人)', level: 1, floor: true, kitchen: true, targetDays: 14, availableSlots: ['early', 'late'] },
-    ];
+    const staff = (SAMPLE_STAFF[key] || []).map((row, i) => ({
+      id: 'staff' + (i + 1),
+      name: row[0],
+      level: row[1],
+      roles: row[2].map((ri) => (parts.roles[ri] ? parts.roles[ri].id : null)).filter(Boolean),
+      targetDays: row[3],
+      availableWeekdays: row[4] || [0, 1, 2, 3, 4, 5, 6],
+      availableSlots: (row[5] || parts.slots.map((s, si) => si)).map((si) => parts.slots[si].id),
+      daysOff: [],
+      maxConsecutiveDays: 0,
+      note: '',
+    }));
     return { store: store, staff: staff };
   }
 
   return {
     WEEKDAY_LABELS: WEEKDAY_LABELS,
-    ROLE_LABELS: ROLE_LABELS,
-    LEVEL_LABELS: LEVEL_LABELS,
+    ANY_ROLE: ANY_ROLE,
+    ANY_ROLE_LABEL: ANY_ROLE_LABEL,
+    DEFAULT_LEVEL_LABELS: DEFAULT_LEVEL_LABELS,
     DEFAULT_OPTIONS: DEFAULT_OPTIONS,
+    PRESETS: PRESETS,
+    presetToStore: presetToStore,
     generate: generate,
     toCsvByDate: toCsvByDate,
     toCsvByStaff: toCsvByStaff,

@@ -7,6 +7,9 @@ const S = require('../scheduler.js');
 // ---------------- テスト用の入力 ----------------
 
 // 2026-09-01(火)〜2026-09-07(月)の 7 日間
+// 役割は「フロア(r1)」「キッチン(r2)」の 2 つを既定にする
+const ROLES = [{ id: 'r1', name: 'フロア' }, { id: 'r2', name: 'キッチン' }];
+
 function makeStore(over) {
   return Object.assign({
     name: 'テスト店',
@@ -14,15 +17,16 @@ function makeStore(over) {
     periodEnd: '2026-09-07',
     closedWeekdays: [],
     closedDates: [],
+    roles: ROLES,
     slots: [
-      { id: 'a', name: '早番', start: '09:00', end: '15:00', required: 2, requiredFloor: 1, requiredKitchen: 1, leaderLevel: 0 },
+      { id: 'a', name: '早番', start: '09:00', end: '15:00', required: 2, requiredByRole: { r1: 1, r2: 1 }, leaderLevel: 0 },
     ],
   }, over || {});
 }
 
 function makeStaff(over) {
   return Object.assign({
-    id: 'x', name: 'X', level: 3, floor: true, kitchen: true, targetDays: 7,
+    id: 'x', name: 'X', level: 3, roles: ['r1', 'r2'], targetDays: 7,
   }, over || {});
 }
 
@@ -104,32 +108,32 @@ test('出勤日数が目標に届かないときは警告を出す', () => {
 
 // ---------------- フロア / キッチン ----------------
 
-test('フロアができないスタッフはフロア担当にならない', () => {
+test('その役割ができないスタッフはその担当にならない', () => {
   const staff = [
-    makeStaff({ id: 'k1', name: 'キッチン専任', floor: false, kitchen: true }),
-    makeStaff({ id: 'k2', name: 'キッチン専任2', floor: false, kitchen: true }),
-    makeStaff({ id: 'f1', name: 'フロア専任', floor: true, kitchen: false }),
+    makeStaff({ id: 'k1', name: 'キッチン専任', roles: ['r2'] }),
+    makeStaff({ id: 'k2', name: 'キッチン専任2', roles: ['r2'] }),
+    makeStaff({ id: 'f1', name: 'フロア専任', roles: ['r1'] }),
   ];
   const r = run(makeStore(), staff);
   allAssignments(r).forEach((x) => {
-    if (x.role === 'floor') assert.notStrictEqual(x.id.slice(0, 1), 'k');
-    if (x.role === 'kitchen') assert.notStrictEqual(x.id.slice(0, 1), 'f');
+    if (x.role === 'r1') assert.notStrictEqual(x.id.slice(0, 1), 'k');
+    if (x.role === 'r2') assert.notStrictEqual(x.id.slice(0, 1), 'f');
   });
 });
 
-test('フロア必須・キッチン必須の人数を満たす', () => {
+test('役割ごとの必須人数を満たす', () => {
   const store = makeStore({
-    slots: [{ id: 'a', name: '早番', required: 4, requiredFloor: 2, requiredKitchen: 1, leaderLevel: 0 }],
+    slots: [{ id: 'a', name: '早番', required: 4, requiredByRole: { r1: 2, r2: 1 }, leaderLevel: 0 }],
   });
   const staff = [];
-  for (let i = 0; i < 4; i += 1) staff.push(makeStaff({ id: 'f' + i, name: 'F' + i, floor: true, kitchen: false }));
-  for (let i = 0; i < 3; i += 1) staff.push(makeStaff({ id: 'k' + i, name: 'K' + i, floor: false, kitchen: true }));
+  for (let i = 0; i < 4; i += 1) staff.push(makeStaff({ id: 'f' + i, name: 'F' + i, roles: ['r1'] }));
+  for (let i = 0; i < 3; i += 1) staff.push(makeStaff({ id: 'k' + i, name: 'K' + i, roles: ['r2'] }));
   const r = run(store, staff);
   r.days.forEach((day) => {
     day.cells.forEach((cell) => {
       assert.strictEqual(cell.unfilled.length, 0, day.date + ' に不足が出ている');
-      const floors = cell.assigned.filter((a) => a.role === 'floor').length;
-      const kitchens = cell.assigned.filter((a) => a.role === 'kitchen').length;
+      const floors = cell.assigned.filter((a) => a.role === 'r1').length;
+      const kitchens = cell.assigned.filter((a) => a.role === 'r2').length;
       assert.ok(floors >= 2, day.date + ' のフロアが ' + floors + '人');
       assert.ok(kitchens >= 1, day.date + ' のキッチンが ' + kitchens + '人');
       assert.strictEqual(cell.assigned.length, 4);
@@ -137,24 +141,24 @@ test('フロア必須・キッチン必須の人数を満たす', () => {
   });
 });
 
-test('フロアもキッチンも不可のスタッフは使わず、設定の警告を出す', () => {
+test('できる役割が 1 つもないスタッフは使わず、設定の警告を出す', () => {
   const staff = [
-    makeStaff({ id: 'n', name: 'なし', floor: false, kitchen: false }),
+    makeStaff({ id: 'n', name: 'なし', roles: [] }),
     makeStaff({ id: 'a', name: 'A' }),
     makeStaff({ id: 'b', name: 'B' }),
   ];
   const r = run(makeStore(), staff);
   assert.ok(!allAssignments(r).some((x) => x.id === 'n'));
-  assert.ok(r.warnings.some((w) => w.type === 'setup' && /フロアもキッチンも/.test(w.message)));
+  assert.ok(r.warnings.some((w) => w.type === 'setup' && /できる役割/.test(w.message)));
 });
 
-test('必要人数がフロア+キッチン必須より少なければ必須の合計まで増やす', () => {
+test('必要人数が役割の必須人数の合計より少なければ合計まで増やす', () => {
   const store = makeStore({
-    slots: [{ id: 'a', name: '早番', required: 1, requiredFloor: 1, requiredKitchen: 1, leaderLevel: 0 }],
+    slots: [{ id: 'a', name: '早番', required: 1, requiredByRole: { r1: 1, r2: 1 }, leaderLevel: 0 }],
   });
   const staff = [
-    makeStaff({ id: 'f', name: 'F', floor: true, kitchen: false }),
-    makeStaff({ id: 'k', name: 'K', floor: false, kitchen: true }),
+    makeStaff({ id: 'f', name: 'F', roles: ['r1'] }),
+    makeStaff({ id: 'k', name: 'K', roles: ['r2'] }),
   ];
   const r = run(store, staff, { maxConsecutiveDays: 0 });
   assert.ok(r.warnings.some((w) => w.type === 'setup' && /必要人数/.test(w.message)));
@@ -168,7 +172,7 @@ test('必要人数がフロア+キッチン必須より少なければ必須の�
 
 test('リーダー要件があるとレベルを満たす人を 1 人入れる', () => {
   const store = makeStore({
-    slots: [{ id: 'a', name: '早番', required: 2, requiredFloor: 0, requiredKitchen: 0, leaderLevel: 4 }],
+    slots: [{ id: 'a', name: '早番', required: 2, requiredByRole: {}, leaderLevel: 4 }],
   });
   const staff = [
     makeStaff({ id: 'v1', name: 'ベテラン1', level: 5 }),
@@ -186,7 +190,7 @@ test('リーダー要件があるとレベルを満たす人を 1 人入れる',
 
 test('リーダー要件を満たす人がいなければ警告を出す(枠は埋める)', () => {
   const store = makeStore({
-    slots: [{ id: 'a', name: '早番', required: 2, requiredFloor: 0, requiredKitchen: 0, leaderLevel: 5 }],
+    slots: [{ id: 'a', name: '早番', required: 2, requiredByRole: {}, leaderLevel: 5 }],
   });
   const staff = [
     makeStaff({ id: 'n1', name: '新人1', level: 1 }),
@@ -240,8 +244,8 @@ test('勤務できない曜日には入れない', () => {
 test('対応できない時間帯には入れない・同じ日に 2 つの枠へは入れない', () => {
   const store = makeStore({
     slots: [
-      { id: 'a', name: '早番', required: 1, requiredFloor: 0, requiredKitchen: 0, leaderLevel: 0 },
-      { id: 'b', name: '遅番', required: 1, requiredFloor: 0, requiredKitchen: 0, leaderLevel: 0 },
+      { id: 'a', name: '早番', required: 1, requiredByRole: {}, leaderLevel: 0 },
+      { id: 'b', name: '遅番', required: 1, requiredByRole: {}, leaderLevel: 0 },
     ],
   });
   const staff = [
@@ -287,7 +291,7 @@ test('スタッフ個別の連勤上限が全体設定より優先される', ()
 
 test('土日の必要人数を平日と別に設定できる', () => {
   const store = makeStore({
-    slots: [{ id: 'a', name: '早番', required: 1, requiredWeekend: 3, requiredFloor: 0, requiredKitchen: 0, leaderLevel: 0 }],
+    slots: [{ id: 'a', name: '早番', required: 1, requiredWeekend: 3, requiredByRole: {}, leaderLevel: 0 }],
   });
   const staff = [];
   for (let i = 0; i < 4; i += 1) staff.push(makeStaff({ id: 's' + i, name: 'S' + i, targetDays: 7 }));
@@ -300,7 +304,7 @@ test('土日の必要人数を平日と別に設定できる', () => {
 
 test('枠を設ける曜日を絞れる', () => {
   const store = makeStore({
-    slots: [{ id: 'a', name: '土日だけ', required: 1, requiredFloor: 0, requiredKitchen: 0, leaderLevel: 0, weekdays: [0, 6] }],
+    slots: [{ id: 'a', name: '土日だけ', required: 1, requiredByRole: {}, leaderLevel: 0, weekdays: [0, 6] }],
   });
   const staff = [makeStaff({ id: 'a', name: 'A' })];
   const r = run(store, staff);
@@ -314,7 +318,7 @@ test('枠を設ける曜日を絞れる', () => {
 
 test('人数が足りないときは不足として警告に出す', () => {
   const store = makeStore({
-    slots: [{ id: 'a', name: '早番', required: 3, requiredFloor: 0, requiredKitchen: 0, leaderLevel: 0 }],
+    slots: [{ id: 'a', name: '早番', required: 3, requiredByRole: {}, leaderLevel: 0 }],
   });
   const staff = [makeStaff({ id: 'a', name: 'A' })];
   const r = run(store, staff, { maxConsecutiveDays: 0 });
@@ -335,13 +339,13 @@ test('同じ日の枠の入れ替えで埋められる不足は埋める', () =>
     periodStart: '2026-09-01',
     periodEnd: '2026-09-01',
     slots: [
-      { id: 'a', name: '早番', required: 1, requiredFloor: 1, requiredKitchen: 0, leaderLevel: 0 },
-      { id: 'b', name: '遅番', required: 1, requiredFloor: 0, requiredKitchen: 1, leaderLevel: 0 },
+      { id: 'a', name: '早番', required: 1, requiredByRole: { r1: 1 }, leaderLevel: 0 },
+      { id: 'b', name: '遅番', required: 1, requiredByRole: { r2: 1 }, leaderLevel: 0 },
     ],
   });
   const staff = [
-    makeStaff({ id: 'both', name: '両方できる', floor: true, kitchen: true, availableSlots: ['a', 'b'] }),
-    makeStaff({ id: 'floorOnly', name: 'フロア専任', floor: true, kitchen: false, availableSlots: ['a'] }),
+    makeStaff({ id: 'both', name: '両方できる', roles: ['r1', 'r2'], availableSlots: ['a', 'b'] }),
+    makeStaff({ id: 'floorOnly', name: 'フロア専任', roles: ['r1'], availableSlots: ['a'] }),
   ];
   const r = run(store, staff);
   const cells = r.days[0].cells;
@@ -354,24 +358,27 @@ test('同じ日の枠の入れ替えで埋められる不足は埋める', () =>
 // ---------------- 出力・その他 ----------------
 
 test('同じ入力からは同じ結果になる(再現性)', () => {
-  const d = S.sampleData('2026-09-05');
+  const d = S.sampleData('aushop', '2026-09-05');
   const a = S.generate({ store: d.store, staff: d.staff });
   const b = S.generate({ store: d.store, staff: d.staff });
   assert.deepStrictEqual(allAssignments(a), allAssignments(b));
 });
 
-test('サンプルデータで生成できる', () => {
-  const d = S.sampleData('2026-09-05');
-  const r = S.generate({ store: d.store, staff: d.staff });
-  assert.strictEqual(r.ok, true);
-  assert.ok(r.stats.assignedTotal > 0);
-  r.staffSummary.forEach((row) => assert.ok(row.assignedDays <= row.targetDays));
+test('どの業態プリセットでもサンプルを生成できる', () => {
+  Object.keys(S.PRESETS).forEach((key) => {
+    const d = S.sampleData(key, '2026-09-05');
+    const r = S.generate({ store: d.store, staff: d.staff });
+    assert.strictEqual(r.ok, true, key + ' が生成できない');
+    assert.ok(r.stats.assignedTotal > 0, key + ' の割り当てが 0');
+    assert.ok(r.stats.fillRate >= 0.8, key + ' の充足率が低すぎる: ' + r.stats.fillRate);
+    r.staffSummary.forEach((row) => assert.ok(row.assignedDays <= row.targetDays));
+  });
 });
 
 test('CSV に日付別・スタッフ別の内容が出る', () => {
   const store = makeStore({
     closedWeekdays: [2],
-    slots: [{ id: 'a', name: '早番', start: '09:00', end: '15:00', required: 2, requiredFloor: 1, requiredKitchen: 0, leaderLevel: 0 }],
+    slots: [{ id: 'a', name: '早番', start: '09:00', end: '15:00', required: 2, requiredByRole: { r1: 1 }, leaderLevel: 0 }],
   });
   const staff = [makeStaff({ id: 'a', name: '山田 太郎', targetDays: 6 })];
   const r = run(store, staff);
@@ -384,6 +391,7 @@ test('CSV に日付別・スタッフ別の内容が出る', () => {
 
   const csv2 = S.toCsvByStaff(r);
   assert.ok(csv2.split('\n')[0].indexOf('目標出勤日数') >= 0);
+  assert.ok(csv2.split('\n')[0].indexOf('フロア') >= 0);
   assert.ok(csv2.indexOf('山田 太郎') >= 0);
 });
 
@@ -398,8 +406,8 @@ test('表示用マトリクスは全日 × 全枠の形になる', () => {
   const store = makeStore({
     closedWeekdays: [2],
     slots: [
-      { id: 'a', name: '早番', required: 1, requiredFloor: 0, requiredKitchen: 0, leaderLevel: 0 },
-      { id: 'b', name: '遅番', required: 1, requiredFloor: 0, requiredKitchen: 0, leaderLevel: 0, weekdays: [0, 6] },
+      { id: 'a', name: '早番', required: 1, requiredByRole: {}, leaderLevel: 0 },
+      { id: 'b', name: '遅番', required: 1, requiredByRole: {}, leaderLevel: 0, weekdays: [0, 6] },
     ],
   });
   const r = run(store, [makeStaff({ id: 'a', name: 'A' })]);
@@ -410,4 +418,112 @@ test('表示用マトリクスは全日 × 全枠の形になる', () => {
     if (row.closed) assert.deepStrictEqual(row.cells, [null, null]);
     else if (row.weekday !== 0 && row.weekday !== 6) assert.strictEqual(row.cells[1], null);
   });
+});
+
+// ---------------- 業態ごとのカスタマイズ ----------------
+
+test('役割は店舗ごとに自由に定義できる(au ショップの例)', () => {
+  const roles = [{ id: 'floor', name: 'フロア' }, { id: 'counter', name: 'カウンター' }, { id: 'office', name: '事務' }];
+  const store = makeStore({
+    roles: roles,
+    slots: [{ id: 'a', name: '早番', required: 3, requiredByRole: { floor: 1, counter: 1, office: 1 }, leaderLevel: 0 }],
+  });
+  const staff = [
+    makeStaff({ id: 'f', name: 'フロア担当', roles: ['floor'] }),
+    makeStaff({ id: 'c', name: 'カウンター担当', roles: ['counter'] }),
+    makeStaff({ id: 'o', name: '事務担当', roles: ['office'] }),
+  ];
+  const r = run(store, staff, { maxConsecutiveDays: 0 });
+  assert.deepStrictEqual(r.roles.map((x) => x.name), ['フロア', 'カウンター', '事務']);
+  r.days.forEach((day) => day.cells.forEach((cell) => {
+    assert.strictEqual(cell.unfilled.length, 0, day.date + ' に不足');
+    assert.deepStrictEqual(
+      cell.assigned.map((a) => a.id).sort(),
+      ['c', 'f', 'o']
+    );
+    // 担当名が結果に入る
+    const byId = {};
+    cell.assigned.forEach((a) => { byId[a.id] = a.roleLabel; });
+    assert.strictEqual(byId.f, 'フロア');
+    assert.strictEqual(byId.c, 'カウンター');
+    assert.strictEqual(byId.o, '事務');
+  }));
+});
+
+test('役割を 1 つも定義しなければ、誰でもどの枠にも入れる', () => {
+  const store = makeStore({
+    roles: [],
+    slots: [{ id: 'a', name: '早番', required: 2, requiredByRole: {}, leaderLevel: 0 }],
+  });
+  const staff = [
+    { id: 'a', name: 'A', level: 3, targetDays: 7 },
+    { id: 'b', name: 'B', level: 2, targetDays: 7 },
+  ];
+  const r = run(store, staff, { maxConsecutiveDays: 0 });
+  assert.strictEqual(r.roles.length, 0);
+  r.days.forEach((day) => day.cells.forEach((cell) => {
+    assert.strictEqual(cell.assigned.length, 2, day.date);
+    cell.assigned.forEach((a) => assert.strictEqual(a.role, S.ANY_ROLE));
+  }));
+  assert.ok(!r.warnings.some((w) => w.type === 'setup'));
+});
+
+test('スタッフの roles を省略すると全役割ができる扱いになる', () => {
+  const store = makeStore({
+    slots: [{ id: 'a', name: '早番', required: 2, requiredByRole: { r1: 1, r2: 1 }, leaderLevel: 0 }],
+  });
+  const staff = [
+    { id: 'a', name: 'A', level: 3, targetDays: 7 },
+    { id: 'b', name: 'B', level: 3, targetDays: 7 },
+  ];
+  const r = run(store, staff, { maxConsecutiveDays: 0 });
+  r.days.forEach((day) => day.cells.forEach((cell) => {
+    assert.strictEqual(cell.unfilled.length, 0, day.date);
+  }));
+});
+
+test('存在しない役割 id はスタッフから取り除かれる', () => {
+  const store = makeStore();
+  const staff = [makeStaff({ id: 'a', name: 'A', roles: ['r1', 'unknown'] })];
+  const r = run(store, staff);
+  assert.deepStrictEqual(r.staffSummary[0].roles, ['r1']);
+  assert.deepStrictEqual(r.staffSummary[0].roleNames, ['フロア']);
+});
+
+test('プリセットは役割・レベルの呼び方・時間帯を返す', () => {
+  Object.keys(S.PRESETS).forEach((key) => {
+    const parts = S.presetToStore(key);
+    assert.strictEqual(parts.roles.length, S.PRESETS[key].roles.length, key);
+    assert.strictEqual(parts.levelLabels.length, 5, key);
+    assert.ok(parts.slots.length > 0, key);
+    parts.slots.forEach((slot) => {
+      // 役割ごとの必須人数のキーは、その店舗の役割 id とそろっている
+      assert.deepStrictEqual(Object.keys(slot.requiredByRole).sort(), parts.roles.map((r) => r.id).sort(), key);
+    });
+  });
+  assert.deepStrictEqual(S.presetToStore('aushop').roles.map((r) => r.name), ['フロア', 'カウンター', '事務']);
+  assert.deepStrictEqual(S.presetToStore('simple').roles, []);
+});
+
+test('レベルの呼び方は店舗ごとに変えられる(5 つに満たなければ既定で埋める)', () => {
+  const r = run(makeStore({ levelLabels: ['見習い', '', '一人前'] }), [makeStaff({ id: 'a', name: 'A' })]);
+  assert.strictEqual(r.store.levelLabels[0], '見習い');
+  assert.strictEqual(r.store.levelLabels[1], S.DEFAULT_LEVEL_LABELS[1]);
+  assert.strictEqual(r.store.levelLabels[2], '一人前');
+  assert.strictEqual(r.store.levelLabels.length, 5);
+});
+
+test('役割名は CSV の担当欄にそのまま出る', () => {
+  const store = makeStore({
+    roles: [{ id: 'floor', name: 'フロア' }, { id: 'counter', name: 'カウンター' }],
+    slots: [{ id: 'a', name: '早番', required: 2, requiredByRole: { floor: 1, counter: 1 }, leaderLevel: 0 }],
+  });
+  const staff = [
+    makeStaff({ id: 'f', name: 'F', roles: ['floor'] }),
+    makeStaff({ id: 'c', name: 'C', roles: ['counter'] }),
+  ];
+  const r = run(store, staff, { maxConsecutiveDays: 0 });
+  const csv = S.toCsvByDate(r);
+  assert.ok(csv.indexOf(',カウンター,C,') >= 0, csv.split('\n')[1]);
+  assert.ok(csv.indexOf(',フロア,F,') >= 0);
 });
