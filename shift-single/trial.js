@@ -19,11 +19,12 @@
   'use strict';
 
   const CONFIG = {
-    storeName: '',      // 例: 'au ショップ 〇〇店'
-    startDate: '',      // 例: '2026-09-15'
-    months: 3,          // 試用期間(か月)
-    endDate: '',        // 空なら startDate + months の前日
-    contact: '',        // 例: 'shift-trial@example.com'
+    storeName: 'au ショップ 大和店',
+    startDate: '2026-09-15',   // 10月のシフト作成から使い始められるように9月中旬開始
+    months: 3,                 // 試用期間(か月)→ 2026-12-14 まで
+    endDate: '',               // 空なら startDate + months の前日
+    // 連絡先は店舗に直接お伝え済みのため、公開ページには載せない
+    contact: '',
     noticeDays: 14,     // 終了何日前から「まもなく終了」を出すか
   };
 

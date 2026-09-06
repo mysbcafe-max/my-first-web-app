@@ -45,12 +45,18 @@
     return d.getFullYear() + '-' + pad2(d.getMonth() + 1) + '-' + pad2(d.getDate());
   }
 
-  function thisMonth() {
+  // offset 0 = 今月, 1 = 来月
+  function monthRange(offset) {
     const now = new Date();
+    const m = now.getMonth() + (offset || 0);
     return {
-      start: localDate(new Date(now.getFullYear(), now.getMonth(), 1)),
-      end: localDate(new Date(now.getFullYear(), now.getMonth() + 1, 0)),
+      start: localDate(new Date(now.getFullYear(), m, 1)),
+      end: localDate(new Date(now.getFullYear(), m + 1, 0)),
     };
+  }
+
+  function thisMonth() {
+    return monthRange(0);
   }
 
   function nextId(prefix, list) {
@@ -933,6 +939,17 @@
       data.store[name] = e.target.value;
       save();
     });
+    function setPeriod(offset) {
+      const range = monthRange(offset);
+      data.store.periodStart = range.start;
+      data.store.periodEnd = range.end;
+      save();
+      renderStoreForm();
+      setStatus('#data-status', '');
+    }
+    $('#btn-period-this').addEventListener('click', function () { setPeriod(0); });
+    $('#btn-period-next').addEventListener('click', function () { setPeriod(1); });
+
     $('#btn-add-closed-date').addEventListener('click', function () {
       const input = $('#store-closed-date');
       const value = input.value;

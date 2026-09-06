@@ -200,3 +200,6 @@ tbody tr:nth-child(even) { background: #fafbfc; }
 .guide-steps > li { margin-bottom: 1rem; }
 .guide-steps > li > p { margin: 0.25rem 0 0; color: var(--muted); }
 .guide-warn { color: var(--error-ink); }
+
+.period-quick { display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; }
+.period-quick .field-label { margin: 0; }

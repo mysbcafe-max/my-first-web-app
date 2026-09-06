@@ -3,6 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="robots" content="noindex">
   <title>シフト生成(一店舗用) | Web事業部</title>
   <link rel="stylesheet" href="style.css">
 </head>
@@ -134,6 +135,14 @@
           <label>店舗名 <input type="text" name="name" placeholder="カフェ 本店"></label>
           <label><span>開始日 <span class="req">*</span></span> <input type="date" name="periodStart" required></label>
           <label><span>終了日 <span class="req">*</span></span> <input type="date" name="periodEnd" required></label>
+          <div class="form-grid__full period-quick">
+            <span class="field-label">期間をまとめて設定</span>
+            <div class="btn-group">
+              <button type="button" class="btn btn-small" id="btn-period-this">今月</button>
+              <button type="button" class="btn btn-small" id="btn-period-next">来月</button>
+            </div>
+            <small>翌月のシフトを作るときは「来月」を押してから生成してください</small>
+          </div>
           <fieldset class="form-grid__full">
             <legend>定休日(曜日)</legend>
             <div class="check-row" id="store-closed-weekdays"></div>

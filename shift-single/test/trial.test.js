@@ -8,10 +8,10 @@ function cfg(over) {
   return Object.assign({ storeName: 'テスト店', startDate: '2026-09-15', months: 3, contact: 'test@example.com' }, over || {});
 }
 
-test('開始日が未設定なら案内を出さない', () => {
-  assert.strictEqual(T.status({}).enabled, false);
+test('開始日が未設定・不正なら案内を出さない', () => {
   assert.strictEqual(T.status({ startDate: '' }, '2026-09-20').enabled, false);
   assert.strictEqual(T.status({ startDate: 'あした' }, '2026-09-20').enabled, false);
+  assert.strictEqual(T.status({ startDate: '2026/09/20' }, '2026-09-20').enabled, false);
 });
 
 test('終了日は「開始日 + 3か月 の前日」になる', () => {
@@ -68,8 +68,19 @@ test('案内文に店舗名・期間・連絡先が入る', () => {
   assert.ok(ended.message.indexOf('終了しました') >= 0, ended.message);
 });
 
-test('既定の設定は空(誤って試用案内が出ない)', () => {
-  assert.strictEqual(T.CONFIG.startDate, '');
+test('配布する設定が壊れていない(店舗名・開始日・3か月)', () => {
+  assert.ok(/^\d{4}-\d{2}-\d{2}$/.test(T.CONFIG.startDate), '開始日の形式が不正: ' + T.CONFIG.startDate);
   assert.strictEqual(T.CONFIG.months, 3);
-  assert.strictEqual(T.status(T.CONFIG, '2026-10-01').enabled, false);
+  assert.ok(T.CONFIG.storeName.length > 0, '店舗名が空');
+  const st = T.status(T.CONFIG, T.CONFIG.startDate);
+  assert.strictEqual(st.enabled, true);
+  assert.strictEqual(st.phase, 'active');
+  // 3か月ぶん(開始日 + 3か月 の前日)であること
+  assert.strictEqual(st.endDate, T.addDays(T.addMonths(T.CONFIG.startDate, 3), -1));
+});
+
+test('連絡先が未設定でも案内は成立する', () => {
+  const st = T.status(Object.assign({}, T.CONFIG, { contact: '' }), '2026-10-01');
+  assert.strictEqual(st.contact, '');
+  assert.ok(st.message.length > 0);
 });
