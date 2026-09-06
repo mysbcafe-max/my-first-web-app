@@ -1,0 +1,195 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>シフト自動生成 | Web事業部</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="app-header">
+    <div class="app-header__inner">
+      <h1 class="app-title"><a href="../">Web事業部</a> / シフト自動生成</h1>
+      <nav class="tabs" role="tablist" aria-label="画面切り替え">
+        <button class="tab is-active" role="tab" data-tab="generate" aria-selected="true">シフト生成</button>
+        <button class="tab" role="tab" data-tab="employees" aria-selected="false">社員 <span class="badge" id="count-employees">0</span></button>
+        <button class="tab" role="tab" data-tab="stores" aria-selected="false">店舗 <span class="badge" id="count-stores">0</span></button>
+        <button class="tab" role="tab" data-tab="data" aria-selected="false">データ</button>
+      </nav>
+    </div>
+  </header>
+
+  <main class="app-main">
+
+    <!-- ============ シフト生成 ============ -->
+    <section class="panel" id="tab-generate" role="tabpanel">
+      <h2>シフト生成</h2>
+      <p class="help">登録した社員情報(住所・レベル・NG店舗・勤務可能曜日・希望休)と店舗情報(必要人数・必要レベル・定休日)から、期間内の各日のアサインを作ります。</p>
+
+      <form id="form-generate" class="form-grid">
+        <label>開始日 <input type="date" name="startDate" required></label>
+        <label>終了日 <input type="date" name="endDate" required></label>
+        <label>通勤距離の上限(km) <input type="number" name="maxDistanceKm" min="0" step="1" value="60"> <small>0 で無制限</small></label>
+        <label>連勤上限(日) <input type="number" name="maxConsecutiveDays" min="0" max="14" step="1" value="5"> <small>0 で無制限</small></label>
+        <details class="form-grid__full">
+          <summary>スコアの重み(上級者向け)</summary>
+          <div class="form-grid">
+            <label>距離 1km あたりの減点 <input type="number" name="weightDistance" min="0" step="0.1" value="1"></label>
+            <label>公平性(稼働率の偏り)の減点 <input type="number" name="weightFairness" min="0" step="1" value="20"></label>
+            <label>希望店舗への加点 <input type="number" name="weightPreferred" min="0" step="1" value="15"></label>
+            <label>同じ店舗の継続への加点 <input type="number" name="weightContinuity" min="0" step="1" value="5"></label>
+            <label>高レベル人材の温存(超過 1 段階あたりの減点) <input type="number" name="weightOverLevel" min="0" step="1" value="2"></label>
+          </div>
+        </details>
+        <div class="form-actions form-grid__full">
+          <button type="submit" class="btn btn-primary">シフトを生成</button>
+          <span id="generate-status" class="status"></span>
+        </div>
+      </form>
+
+      <div id="result" class="result" hidden>
+        <div class="result__toolbar">
+          <h3>生成結果 <small id="result-period"></small></h3>
+          <div class="btn-group">
+            <button class="btn" id="btn-csv-matrix">CSV(表形式)</button>
+            <button class="btn" id="btn-csv-list">CSV(一覧)</button>
+            <button class="btn" id="btn-print">印刷</button>
+          </div>
+        </div>
+        <div id="result-warnings"></div>
+        <h4>店舗 × 日付</h4>
+        <div class="table-wrap"><table class="matrix" id="result-matrix"></table></div>
+        <h4>社員別の集計</h4>
+        <div class="table-wrap"><table class="list" id="result-employees"></table></div>
+        <h4>店舗別の充足率</h4>
+        <div class="table-wrap"><table class="list" id="result-stores"></table></div>
+      </div>
+    </section>
+
+    <!-- ============ 社員 ============ -->
+    <section class="panel" id="tab-employees" role="tabpanel" hidden>
+      <h2>社員</h2>
+      <form id="form-employee" class="form-card">
+        <input type="hidden" name="id">
+        <h3 id="employee-form-title">社員を追加</h3>
+        <div class="form-grid">
+          <label><span>名前 <span class="req">*</span></span> <input type="text" name="name" required placeholder="山田 太郎"></label>
+          <label>レベル
+            <select name="level">
+              <option value="1">1(研修中)</option>
+              <option value="2">2(一般)</option>
+              <option value="3" selected>3(中堅)</option>
+              <option value="4">4(リーダー)</option>
+              <option value="5">5(店長代行)</option>
+            </select>
+          </label>
+          <label class="form-grid__full">住所 <input type="text" name="address" placeholder="東京都新宿区西新宿2-8-1"> <small>都道府県・市区町村から店舗との距離を推定します</small></label>
+          <label>緯度(任意) <input type="number" name="lat" step="any" placeholder="35.6896"></label>
+          <label>経度(任意) <input type="number" name="lng" step="any" placeholder="139.6921"> <small>入れると距離が正確になります</small></label>
+          <label>週の上限日数 <input type="number" name="maxDaysPerWeek" min="0" max="7" value="5"></label>
+          <fieldset class="form-grid__full">
+            <legend>勤務可能な曜日</legend>
+            <div class="check-row" data-weekdays="availableWeekdays"></div>
+          </fieldset>
+          <label class="form-grid__full">希望休(YYYY-MM-DD を改行またはカンマ区切り)
+            <textarea name="unavailableDates" rows="2" placeholder="2026-09-10, 2026-09-15"></textarea>
+          </label>
+          <fieldset>
+            <legend>NG店舗(行けない店舗)</legend>
+            <div class="check-col" data-storelist="ngStoreIds"></div>
+          </fieldset>
+          <fieldset>
+            <legend>希望店舗(優先的に入れたい店舗)</legend>
+            <div class="check-col" data-storelist="preferredStoreIds"></div>
+          </fieldset>
+          <label class="form-grid__full">メモ <input type="text" name="memo"></label>
+        </div>
+        <div class="form-actions">
+          <button type="submit" class="btn btn-primary">保存</button>
+          <button type="button" class="btn" data-action="reset-form">クリア</button>
+        </div>
+      </form>
+      <div class="table-wrap"><table class="list" id="table-employees"></table></div>
+    </section>
+
+    <!-- ============ 店舗 ============ -->
+    <section class="panel" id="tab-stores" role="tabpanel" hidden>
+      <h2>店舗</h2>
+      <form id="form-store" class="form-card">
+        <input type="hidden" name="id">
+        <h3 id="store-form-title">店舗を追加</h3>
+        <div class="form-grid">
+          <label><span>店舗名 <span class="req">*</span></span> <input type="text" name="name" required placeholder="新宿西口店"></label>
+          <label>1日の必要人数 <input type="number" name="requiredStaff" min="0" max="99" value="2"></label>
+          <label class="form-grid__full">住所 <input type="text" name="address" placeholder="東京都新宿区西新宿1-1-3"></label>
+          <label>緯度(任意) <input type="number" name="lat" step="any"></label>
+          <label>経度(任意) <input type="number" name="lng" step="any"></label>
+          <label>必要レベル(これ未満は配置しない)
+            <select name="minLevel">
+              <option value="1" selected>1 以上</option>
+              <option value="2">2 以上</option>
+              <option value="3">3 以上</option>
+              <option value="4">4 以上</option>
+              <option value="5">5 以上</option>
+            </select>
+          </label>
+          <label>リーダー要件(1 名はこのレベル以上)
+            <select name="leaderLevel">
+              <option value="0" selected>不要</option>
+              <option value="2">2 以上</option>
+              <option value="3">3 以上</option>
+              <option value="4">4 以上</option>
+              <option value="5">5 以上</option>
+            </select>
+          </label>
+          <fieldset class="form-grid__full">
+            <legend>営業日</legend>
+            <div class="check-row" data-weekdays="openWeekdays"></div>
+          </fieldset>
+          <label class="form-grid__full">メモ <input type="text" name="memo"></label>
+        </div>
+        <div class="form-actions">
+          <button type="submit" class="btn btn-primary">保存</button>
+          <button type="button" class="btn" data-action="reset-form">クリア</button>
+        </div>
+      </form>
+      <div class="table-wrap"><table class="list" id="table-stores"></table></div>
+    </section>
+
+    <!-- ============ データ ============ -->
+    <section class="panel" id="tab-data" role="tabpanel" hidden>
+      <h2>データ</h2>
+      <p class="help">データはこのブラウザの中(localStorage)にだけ保存されます。別の端末で使うときや控えを残すときは JSON で書き出してください。</p>
+      <div class="card-list">
+        <div class="card">
+          <h3>書き出し</h3>
+          <p>社員・店舗・設定を 1 つの JSON ファイルにまとめてダウンロードします。</p>
+          <button class="btn" id="btn-export">JSON を書き出す</button>
+        </div>
+        <div class="card">
+          <h3>読み込み</h3>
+          <p>書き出した JSON を読み込みます。現在のデータは置き換えられます。</p>
+          <input type="file" id="input-import" accept="application/json,.json">
+        </div>
+        <div class="card">
+          <h3>サンプルデータ</h3>
+          <p>動作を試すためのサンプル(社員 10 名・店舗 4 店)を読み込みます。現在のデータは置き換えられます。</p>
+          <button class="btn" id="btn-sample">サンプルを読み込む</button>
+        </div>
+        <div class="card card--danger">
+          <h3>全データ削除</h3>
+          <p>このブラウザに保存されている社員・店舗・生成結果をすべて消します。</p>
+          <button class="btn btn-danger" id="btn-clear">すべて削除</button>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer class="app-footer">
+    <p>シフト自動生成 — 外部サービスに通信せず、すべてブラウザ内で動作します。</p>
+  </footer>
+
+  <script src="scheduler.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
