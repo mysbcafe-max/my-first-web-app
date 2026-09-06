@@ -5,14 +5,30 @@
   const S = window.ShiftScheduler;
   const STORAGE_KEY = 'shift-scheduler-v1';
   const WD = S.WEEKDAY_LABELS;
+  const LEVELS = [1, 2, 3, 4, 5];
+  const DEFAULT_LEVEL_NAMES = ['研修中', '一般', '中堅', 'リーダー', '店長代行'];
 
   // ---------------- 状態 ----------------
 
   const defaultSettings = () => ({
     startDate: '',
     endDate: '',
+    levelNames: DEFAULT_LEVEL_NAMES.slice(),
     options: Object.assign({}, S.DEFAULT_OPTIONS),
   });
+
+  // レベル n の呼び名。未設定・空欄なら既定に戻す
+  function levelName(n) {
+    const names = (state.settings && state.settings.levelNames) || [];
+    const v = (names[n - 1] || '').trim();
+    return v || DEFAULT_LEVEL_NAMES[n - 1] || '';
+  }
+
+  // 「3(中堅)」のような表示
+  function levelLabel(n) {
+    const name = levelName(n);
+    return name ? `${n}(${name})` : String(n);
+  }
 
   let state = loadState();
 
@@ -107,8 +123,8 @@
     });
     $$('.panel').forEach((p) => { p.hidden = p.id !== 'tab-' + name; });
     try { localStorage.setItem(STORAGE_KEY + ':tab', name); } catch (e) { /* ignore */ }
-    if (name === 'employees') renderEmployeeForm();
-    if (name === 'stores') renderStoreForm();
+    if (name === 'employees') { renderLevelOptions(); renderEmployeeForm(); }
+    if (name === 'stores') { renderLevelOptions(); renderStoreForm(); }
   }
 
   $$('.tab').forEach((b) => b.addEventListener('click', () => showTab(b.dataset.tab)));
@@ -133,6 +149,23 @@
     container.innerHTML = state.stores.map((s) =>
       `<label><input type="checkbox" name="${name}" value="${esc(s.id)}" ${sel.includes(s.id) ? 'checked' : ''}>${esc(s.name)}</label>`
     ).join('');
+  }
+
+  // レベルを選ぶ <select> の中身を、現在の呼び名で作り直す
+  function renderLevelOptions() {
+    $$('[data-level-options]').forEach((sel) => {
+      const kind = sel.dataset.levelOptions;
+      const keep = sel.value;
+      let html = '';
+      if (kind === 'leader') html += '<option value="0">不要</option>';
+      LEVELS.forEach((n) => {
+        if (kind === 'leader' && n === 1) return; // Lv1 以上は制約にならない
+        const label = kind === 'employee' ? levelLabel(n) : `${levelLabel(n)} 以上`;
+        html += `<option value="${n}">${esc(label)}</option>`;
+      });
+      sel.innerHTML = html;
+      if (keep !== '') sel.value = keep;
+    });
   }
 
   function checkedValues(form, name) {
@@ -204,7 +237,7 @@
     const rows = state.employees.map((e) => `
       <tr>
         <td>${esc(e.name)}</td>
-        <td class="num"><span class="level">${esc(e.level)}</span></td>
+        <td class="num"><span class="level" title="${esc(levelName(e.level))}">${esc(e.level)}</span> <small>${esc(levelName(e.level))}</small></td>
         <td>${esc(e.address)}${e.lat != null && e.lng != null ? ' <small>(座標あり)</small>' : ''}</td>
         <td class="num">${esc(e.maxDaysPerWeek)}</td>
         <td>${esc(weekdayText(e.availableWeekdays))}</td>
@@ -299,8 +332,8 @@
         <td>${esc(s.name)}</td>
         <td>${esc(s.address)}${s.lat != null && s.lng != null ? ' <small>(座標あり)</small>' : ''}</td>
         <td class="num">${esc(s.requiredStaff)} 名</td>
-        <td class="num">${esc(s.minLevel)} 以上</td>
-        <td class="num">${s.leaderLevel ? esc(s.leaderLevel) + ' 以上' : '<small>—</small>'}</td>
+        <td class="num" title="${esc(levelName(s.minLevel))}">${esc(s.minLevel)} 以上</td>
+        <td class="num" title="${s.leaderLevel ? esc(levelName(s.leaderLevel)) : ''}">${s.leaderLevel ? esc(s.leaderLevel) + ' 以上' : '<small>—</small>'}</td>
         <td>${esc(weekdayText(s.openWeekdays))}</td>
         <td>${esc(s.memo)}</td>
         <td class="actions">
@@ -405,7 +438,7 @@
         const s = d.stores.find((x) => x.storeId === id);
         if (!s) return `<td class="closed ${cls}">定休</td>`;
         let inner = s.assigned.map((a) =>
-          `<span class="name">${esc(a.name)} <small title="${esc(S.methodLabel(a.method))}">Lv${esc(a.level)}・${esc(a.km)}km</small></span>`
+          `<span class="name">${esc(a.name)} <small title="${esc(levelName(a.level))}・${esc(S.methodLabel(a.method))}">Lv${esc(a.level)}・${esc(a.km)}km</small></span>`
         ).join('');
         if (s.shortage > 0) inner += `<span class="shortage">${s.shortage} 名不足</span>`;
         if (s.leaderMissing) inner += '<span class="leader-missing">リーダー不在</span>';
@@ -421,7 +454,7 @@
       if (!st) return '';
       const stores = Object.entries(st.storeCounts).map(([sid, n]) => `${esc(storeName(sid))} ×${n}`).join('、') || '<small>—</small>';
       const dates = st.dates.map((x) => `<span class="chip" title="${esc(storeName(x.storeId))}">${esc(x.date.slice(5).replace('-', '/'))}</span>`).join('');
-      return `<tr><td>${esc(e.name)}</td><td class="num"><span class="level">${esc(e.level)}</span></td><td class="num">${st.days} 日</td><td class="num">${st.km} km</td><td>${stores}</td><td>${dates || '<small>—</small>'}</td></tr>`;
+      return `<tr><td>${esc(e.name)}</td><td class="num"><span class="level" title="${esc(levelName(e.level))}">${esc(e.level)}</span></td><td class="num">${st.days} 日</td><td class="num">${st.km} km</td><td>${stores}</td><td>${dates || '<small>—</small>'}</td></tr>`;
     }).join('');
     $('#result-employees').innerHTML = `<thead><tr><th>社員</th><th>Lv</th><th>出勤日数</th><th>合計距離(片道)</th><th>店舗</th><th>出勤日</th></tr></thead><tbody>${empRows}</tbody>`;
 
@@ -445,6 +478,31 @@
   $('#btn-print').addEventListener('click', () => window.print());
 
   // ---------------- データ ----------------
+
+  const formLevels = $('#form-levels');
+
+  function renderLevelSettings() {
+    $('#level-names').innerHTML = LEVELS.map((n) =>
+      `<label><span class="level">${n}</span><input type="text" name="level${n}" maxlength="20" value="${esc(levelName(n))}" placeholder="${esc(DEFAULT_LEVEL_NAMES[n - 1])}"></label>`
+    ).join('');
+  }
+
+  formLevels.addEventListener('submit', (ev) => {
+    ev.preventDefault();
+    state.settings.levelNames = LEVELS.map((n) => formLevels['level' + n].value.trim());
+    saveState();
+    renderAll();
+    $('#levels-status').textContent = '保存しました';
+    setTimeout(() => { $('#levels-status').textContent = ''; }, 3000);
+  });
+
+  $('#btn-levels-reset').addEventListener('click', () => {
+    state.settings.levelNames = DEFAULT_LEVEL_NAMES.slice();
+    saveState();
+    renderAll();
+    $('#levels-status').textContent = '既定に戻しました';
+    setTimeout(() => { $('#levels-status').textContent = ''; }, 3000);
+  });
 
   $('#btn-export').addEventListener('click', () => {
     const data = { version: 1, exportedAt: new Date().toISOString(), employees: state.employees, stores: state.stores, settings: state.settings };
@@ -497,31 +555,34 @@
 
   function sampleData() {
     const stores = [
-      { id: 's-shinjuku', name: '新宿西口店', address: '東京都新宿区西新宿1-1-3', lat: 35.6896, lng: 139.6995, requiredStaff: 2, minLevel: 1, leaderLevel: 4, openWeekdays: [0, 1, 2, 3, 4, 5, 6], memo: '旗艦店。1 名はリーダー' },
-      { id: 's-shibuya', name: '渋谷店', address: '東京都渋谷区道玄坂1-2-3', lat: 35.6580, lng: 139.7016, requiredStaff: 1, minLevel: 2, leaderLevel: 0, openWeekdays: [0, 1, 2, 3, 4, 5, 6], memo: '' },
-      { id: 's-yokohama', name: '横浜店', address: '神奈川県横浜市西区みなとみらい2-2-1', lat: 35.4571, lng: 139.6329, requiredStaff: 2, minLevel: 1, leaderLevel: 3, openWeekdays: [0, 1, 2, 3, 4, 5, 6], memo: '' },
-      { id: 's-omiya', name: '大宮店', address: '埼玉県さいたま市大宮区桜木町1-7-5', lat: 35.9064, lng: 139.6238, requiredStaff: 1, minLevel: 3, leaderLevel: 0, openWeekdays: [1, 2, 3, 4, 5], memo: '平日のみ営業' },
+      { id: 's-shinjuku', name: '新宿西口店', address: '東京都新宿区西新宿1-1-3', lat: 35.6896, lng: 139.6995, requiredStaff: 2, minLevel: 1, leaderLevel: 4, openWeekdays: [0, 1, 2, 3, 4, 5, 6], memo: '旗艦店。1 名は Lv4 以上' },
+      { id: 's-shibuya', name: '渋谷センター街店', address: '東京都渋谷区宇田川町25-1', lat: 35.6614, lng: 139.6982, requiredStaff: 2, minLevel: 2, leaderLevel: 0, openWeekdays: [0, 1, 2, 3, 4, 5, 6], memo: '新規契約が多いため Lv2 以上' },
+      { id: 's-yokohama', name: '横浜みなとみらい店', address: '神奈川県横浜市西区みなとみらい2-2-1', lat: 35.4571, lng: 139.6329, requiredStaff: 2, minLevel: 1, leaderLevel: 3, openWeekdays: [0, 1, 2, 3, 4, 5, 6], memo: '1 名は Lv3 以上' },
+      { id: 's-kawasaki', name: '川崎駅前店', address: '神奈川県川崎市川崎区駅前本町26-1', lat: 35.5308, lng: 139.6970, requiredStaff: 1, minLevel: 1, leaderLevel: 0, openWeekdays: [0, 1, 2, 3, 4, 5, 6], memo: '' },
+      { id: 's-omiya', name: '大宮店', address: '埼玉県さいたま市大宮区桜木町1-7-5', lat: 35.9064, lng: 139.6238, requiredStaff: 1, minLevel: 3, leaderLevel: 0, openWeekdays: [1, 2, 3, 4, 5], memo: '平日のみ営業。ひとり体制のため Lv3 以上' },
     ];
     const employees = [
-      { id: 'e1', name: '佐藤 一郎', address: '東京都新宿区北新宿3-1', lat: 35.7030, lng: 139.6930, level: 5, maxDaysPerWeek: 5, availableWeekdays: [1, 2, 3, 4, 5, 6], unavailableDates: [], ngStoreIds: [], preferredStoreIds: ['s-shinjuku'], memo: '店長代行' },
-      { id: 'e2', name: '鈴木 花子', address: '東京都渋谷区神宮前6-1', lat: 35.6690, lng: 139.7050, level: 4, maxDaysPerWeek: 5, availableWeekdays: [0, 1, 2, 3, 4, 5, 6], unavailableDates: [], ngStoreIds: ['s-omiya'], preferredStoreIds: ['s-shibuya'], memo: '' },
-      { id: 'e3', name: '高橋 健', address: '神奈川県横浜市神奈川区鶴屋町2-1', lat: 35.4680, lng: 139.6210, level: 4, maxDaysPerWeek: 5, availableWeekdays: [0, 1, 2, 3, 4, 5, 6], unavailableDates: [], ngStoreIds: ['s-omiya'], preferredStoreIds: ['s-yokohama'], memo: '' },
-      { id: 'e4', name: '田中 美咲', address: '埼玉県さいたま市浦和区高砂1-1', lat: 35.8617, lng: 139.6455, level: 3, maxDaysPerWeek: 5, availableWeekdays: [1, 2, 3, 4, 5], unavailableDates: [], ngStoreIds: ['s-yokohama'], preferredStoreIds: ['s-omiya'], memo: '土日は不可' },
-      { id: 'e5', name: '伊藤 翔', address: '東京都中野区中野4-1', lat: 35.7070, lng: 139.6650, level: 3, maxDaysPerWeek: 4, availableWeekdays: [0, 1, 2, 3, 4, 5, 6], unavailableDates: [], ngStoreIds: [], preferredStoreIds: [], memo: '' },
-      { id: 'e6', name: '渡辺 さくら', address: '東京都世田谷区三軒茶屋1-1', lat: 35.6430, lng: 139.6690, level: 2, maxDaysPerWeek: 3, availableWeekdays: [0, 3, 6], unavailableDates: [], ngStoreIds: ['s-yokohama'], preferredStoreIds: ['s-shibuya'], memo: '学生・週3まで' },
-      { id: 'e7', name: '山本 大輔', address: '神奈川県川崎市川崎区駅前本町1-1', lat: 35.5310, lng: 139.6970, level: 2, maxDaysPerWeek: 5, availableWeekdays: [0, 1, 2, 3, 4, 5, 6], unavailableDates: [], ngStoreIds: [], preferredStoreIds: [], memo: '' },
-      { id: 'e8', name: '中村 結衣', address: '東京都豊島区南池袋1-1', lat: 35.7280, lng: 139.7130, level: 1, maxDaysPerWeek: 4, availableWeekdays: [1, 2, 3, 4, 5, 6], unavailableDates: [], ngStoreIds: ['s-yokohama', 's-omiya'], preferredStoreIds: [], memo: '研修中' },
-      { id: 'e9', name: '小林 直人', address: '神奈川県横浜市港北区新横浜2-1', lat: 35.5070, lng: 139.6170, level: 3, maxDaysPerWeek: 5, availableWeekdays: [0, 1, 2, 3, 4, 5, 6], unavailableDates: [], ngStoreIds: [], preferredStoreIds: ['s-yokohama'], memo: '' },
-      { id: 'e10', name: '加藤 恵', address: '東京都杉並区荻窪5-1', lat: 35.7040, lng: 139.6200, level: 4, maxDaysPerWeek: 4, availableWeekdays: [0, 5, 6], unavailableDates: [], ngStoreIds: [], preferredStoreIds: [], memo: '金土日のみ' },
+      { id: 'e01', name: '佐藤 一郎', address: '東京都新宿区北新宿3-1-1', lat: 35.7030, lng: 139.6930, level: 5, maxDaysPerWeek: 5, availableWeekdays: [1, 2, 3, 4, 5, 6], unavailableDates: [], ngStoreIds: [], preferredStoreIds: ['s-shinjuku'], memo: '店長代行。日曜は不可' },
+      { id: 'e02', name: '鈴木 花子', address: '東京都渋谷区神宮前6-1-1', lat: 35.6690, lng: 139.7050, level: 4, maxDaysPerWeek: 5, availableWeekdays: [0, 1, 2, 3, 4, 5, 6], unavailableDates: [], ngStoreIds: ['s-omiya'], preferredStoreIds: ['s-shibuya'], memo: '' },
+      { id: 'e03', name: '高橋 健', address: '神奈川県横浜市神奈川区鶴屋町2-1', lat: 35.4680, lng: 139.6210, level: 4, maxDaysPerWeek: 5, availableWeekdays: [0, 1, 2, 3, 4, 5, 6], unavailableDates: [], ngStoreIds: ['s-omiya'], preferredStoreIds: ['s-yokohama'], memo: '' },
+      { id: 'e04', name: '田中 美咲', address: '埼玉県さいたま市浦和区高砂1-1-1', lat: 35.8617, lng: 139.6455, level: 3, maxDaysPerWeek: 5, availableWeekdays: [1, 2, 3, 4, 5], unavailableDates: [], ngStoreIds: ['s-yokohama', 's-kawasaki'], preferredStoreIds: ['s-omiya'], memo: '育児のため土日は不可' },
+      { id: 'e05', name: '伊藤 翔', address: '東京都中野区中野4-1-1', lat: 35.7070, lng: 139.6650, level: 3, maxDaysPerWeek: 5, availableWeekdays: [0, 1, 2, 3, 4, 5, 6], unavailableDates: [], ngStoreIds: [], preferredStoreIds: [], memo: '' },
+      { id: 'e06', name: '渡辺 さくら', address: '東京都世田谷区三軒茶屋1-1-1', lat: 35.6430, lng: 139.6690, level: 2, maxDaysPerWeek: 3, availableWeekdays: [0, 3, 6], unavailableDates: [], ngStoreIds: ['s-omiya'], preferredStoreIds: ['s-shibuya'], memo: '学生。水・土・日のみ、週3まで' },
+      { id: 'e07', name: '山本 大輔', address: '神奈川県川崎市川崎区砂子1-1-1', lat: 35.5310, lng: 139.6970, level: 2, maxDaysPerWeek: 5, availableWeekdays: [0, 1, 2, 3, 4, 5, 6], unavailableDates: [], ngStoreIds: [], preferredStoreIds: ['s-kawasaki'], memo: '' },
+      { id: 'e08', name: '中村 結衣', address: '東京都豊島区南池袋1-1-1', lat: 35.7280, lng: 139.7130, level: 1, maxDaysPerWeek: 5, availableWeekdays: [1, 2, 3, 4, 5, 6], unavailableDates: [], ngStoreIds: ['s-yokohama', 's-omiya'], preferredStoreIds: [], memo: '研修中。Lv2 以上の店舗には入れない' },
+      { id: 'e09', name: '小林 直人', address: '神奈川県横浜市港北区新横浜2-1-1', lat: 35.5070, lng: 139.6170, level: 3, maxDaysPerWeek: 5, availableWeekdays: [0, 1, 2, 3, 4, 5, 6], unavailableDates: [], ngStoreIds: [], preferredStoreIds: ['s-yokohama'], memo: '' },
+      { id: 'e10', name: '加藤 恵', address: '東京都杉並区荻窪5-1-1', lat: 35.7040, lng: 139.6200, level: 4, maxDaysPerWeek: 5, availableWeekdays: [0, 5, 6], unavailableDates: [], ngStoreIds: [], preferredStoreIds: [], memo: '本業あり。金・土・日のみ' },
+      { id: 'e11', name: '吉田 亮', address: '神奈川県川崎市中原区小杉町3-1-1', lat: 35.5760, lng: 139.6590, level: 2, maxDaysPerWeek: 5, availableWeekdays: [0, 1, 2, 3, 4, 5, 6], unavailableDates: [], ngStoreIds: ['s-omiya'], preferredStoreIds: [], memo: '' },
+      { id: 'e12', name: '松本 由紀', address: '神奈川県横浜市西区北幸1-1-1', lat: 35.4650, lng: 139.6200, level: 5, maxDaysPerWeek: 5, availableWeekdays: [0, 1, 2, 3, 4, 5, 6], unavailableDates: [], ngStoreIds: ['s-omiya'], preferredStoreIds: ['s-yokohama'], memo: 'ベテラン。横浜エリア中心' },
     ];
     // 希望休のサンプル(生成期間の初日+2日)
     const start = nextMonday();
-    employees[1].unavailableDates = [S.addDays(start, 2)];
-    employees[4].unavailableDates = [S.addDays(start, 4), S.addDays(start, 5)];
+    employees[1].unavailableDates = [S.addDays(start, 2)];          // 鈴木: 水曜に希望休
+    employees[4].unavailableDates = [S.addDays(start, 4), S.addDays(start, 5)]; // 伊藤: 金土に希望休
     return {
       employees,
       stores,
-      settings: { startDate: start, endDate: S.addDays(start, 6), options: Object.assign({}, S.DEFAULT_OPTIONS) },
+      settings: Object.assign(defaultSettings(), { startDate: start, endDate: S.addDays(start, 6) }),
       result: null,
     };
   }
@@ -529,6 +590,8 @@
   // ---------------- 初期化 ----------------
 
   function renderAll() {
+    renderLevelOptions();
+    renderLevelSettings();
     renderEmployees();
     renderStores();
     renderEmployeeForm();

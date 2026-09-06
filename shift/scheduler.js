@@ -25,6 +25,7 @@
     maxConsecutiveDays: 5,  // 連勤上限(0 で無効)
     defaultMaxDaysPerWeek: 5,
     improve: true,          // 同日内の入れ替え改善を行う
+    repair: true,           // 空き枠を連鎖的な入れ替えで埋める修復パスを行う
   };
 
   // 住所だけしか分からないときの距離の目安(km)
@@ -285,7 +286,41 @@
       return sc;
     };
 
-    const days = [];
+    // 割り当ての実体。キー: `日付|店舗ID` → 社員の配列
+    const assignMap = new Map();
+    const slotKey = (date, storeId) => date + '|' + storeId;
+    const slotOf = (date, storeId) => assignMap.get(slotKey(date, storeId)) || [];
+    const storeById = new Map(stores.map((s) => [s.id, s]));
+
+    function addAssign(e, s, date) {
+      const key = slotKey(date, s.id);
+      const list = assignMap.get(key) || [];
+      list.push(e);
+      assignMap.set(key, list);
+      const st = stats[e.id];
+      st.days += 1;
+      st.km += distanceOf(e, s).km;
+      st.byWeek[weekKey(date)] = (st.byWeek[weekKey(date)] || 0) + 1;
+      st.storeCounts[s.id] = (st.storeCounts[s.id] || 0) + 1;
+      st.dateSet.add(date);
+      st.dates.push({ date, storeId: s.id });
+    }
+
+    function removeAssign(e, s, date) {
+      const key = slotKey(date, s.id);
+      const list = assignMap.get(key) || [];
+      const i = list.findIndex((x) => x.id === e.id);
+      if (i < 0) return;
+      list.splice(i, 1);
+      const st = stats[e.id];
+      st.days -= 1;
+      st.km = round1(st.km - distanceOf(e, s).km);
+      st.byWeek[weekKey(date)] -= 1;
+      st.storeCounts[s.id] -= 1;
+      if (!st.storeCounts[s.id]) delete st.storeCounts[s.id];
+      st.dateSet.delete(date);
+      st.dates = st.dates.filter((x) => !(x.date === date && x.storeId === s.id));
+    }
 
     // 埋めにくい日(候補者に対して必要枠が多い日)から先に処理する。
     // 日付順に埋めると平日で週上限を使い切り、候補の少ない土日が不足しやすいため。
@@ -338,28 +373,102 @@
 
       if (opt.improve) improveDay(dayAssign, hardOk, scoreOf);
 
-      // 統計を更新し、出力形式に整える
-      const dayOut = {
-        date,
-        weekday: wd,
-        weekdayLabel: WEEKDAY_LABELS[wd],
-        stores: [],
-      };
-      // 出力は元の店舗登録順に並べる
-      stores.forEach((s) => {
-        const slot = dayAssign.find((x) => x.store.id === s.id);
-        if (!slot) return; // 定休日
-        const assigned = slot.employees.map((e) => {
-          const d = distanceOf(e, s);
-          const st = stats[e.id];
-          st.days += 1;
-          st.km += d.km;
-          st.byWeek[weekKey(date)] = (st.byWeek[weekKey(date)] || 0) + 1;
-          st.storeCounts[s.id] = (st.storeCounts[s.id] || 0) + 1;
-          st.dateSet.add(date);
-          st.dates.push({ date, storeId: s.id });
-          return { employeeId: e.id, name: e.name, level: e.level, km: d.km, method: d.method };
+      dayAssign.forEach((slot) => slot.employees.forEach((e) => addAssign(e, slot.store, date)));
+    });
+
+    // ---- 修復パス ----
+    // 1 日ずつ順に埋めると「週上限を使い切った人しか候補がいない」状態が残る。
+    // 空き枠に対して、他の人に別の日を肩代わりしてもらう連鎖(増加路)を探して埋める。
+    if (opt.repair) repairShortages();
+
+    function repairShortages() {
+      dates.forEach((date) => {
+        const wd = weekdayOf(date);
+        stores.forEach((s) => {
+          if (!s.openWeekdays.includes(wd)) return;
+          let guard = s.requiredStaff;
+          while (slotOf(date, s.id).length < s.requiredStaff && guard-- > 0) {
+            if (!tryFill(s, date, new Set(), 0)) break;
+          }
         });
+      });
+    }
+
+    // e を (s, date) に置けるか(週上限・連勤を除くハード制約)
+    function canPlace(e, s, date) {
+      if (!hardOk(e, s)) return false;
+      if (!e.availableWeekdays.includes(weekdayOf(date))) return false;
+      if (e.unavailableDates.includes(date)) return false;
+      return !stats[e.id].dateSet.has(date);
+    }
+
+    function hasWeekRoom(e, date) {
+      if (!(e.maxDaysPerWeek > 0)) return true;
+      return (stats[e.id].byWeek[weekKey(date)] || 0) < e.maxDaysPerWeek;
+    }
+
+    function leaderOk(s, list) {
+      return s.leaderLevel === 0 || list.length === 0 || list.some((e) => e.level >= s.leaderLevel);
+    }
+
+    // (s, date) の空き枠を埋める。空きがなければ、週上限に達した社員の別の日を
+    // 他の社員に肩代わりしてもらい、その社員を空けて入れる(深さ制限つき)。
+    function tryFill(s, date, visited, depth) {
+      if (depth > 3) return false;
+      const room = employees.filter((e) => !visited.has(e.id) && canPlace(e, s, date));
+
+      // そのまま入れられる人がいればスコアの高い順に入れる
+      const direct = room
+        .filter((e) => hasWeekRoom(e, date) && !exceedsConsecutive(stats[e.id].dateSet, date, opt.maxConsecutiveDays))
+        .sort((a, b) => scoreOf(b, s) - scoreOf(a, s) || a.name.localeCompare(b.name, 'ja'));
+      if (direct.length) {
+        addAssign(direct[0], s, date);
+        return true;
+      }
+
+      // 週上限に達している人の別の日を、他の人に肩代わりしてもらう
+      for (const e of room) {
+        visited.add(e.id);
+        const wk = weekKey(date);
+        const freeable = stats[e.id].dates.filter((x) => x.date !== date && weekKey(x.date) === wk);
+        for (const x of freeable) {
+          const s3 = storeById.get(x.storeId);
+          if (!s3) continue;
+          const before3 = slotOf(x.date, s3.id).slice();
+          removeAssign(e, s3, x.date);
+          const canMove =
+            !exceedsConsecutive(stats[e.id].dateSet, date, opt.maxConsecutiveDays) &&
+            tryFill(s3, x.date, visited, depth + 1);
+          // 肩代わりでリーダー要件を壊していないか
+          if (canMove && (leaderOk(s3, slotOf(x.date, s3.id)) || !leaderOk(s3, before3))) {
+            addAssign(e, s, date);
+            return true;
+          }
+          // 戻す
+          if (canMove) {
+            const now = slotOf(x.date, s3.id);
+            const added = now.find((y) => !before3.some((z) => z.id === y.id));
+            if (added) removeAssign(added, s3, x.date);
+          }
+          addAssign(e, s3, x.date);
+        }
+      }
+      return false;
+    }
+
+    // ---- 出力の組み立て ----
+    const days = dates.map((date) => {
+      const wd = weekdayOf(date);
+      const dayOut = { date, weekday: wd, weekdayLabel: WEEKDAY_LABELS[wd], stores: [] };
+      stores.forEach((s) => {
+        if (!s.openWeekdays.includes(wd) || s.requiredStaff <= 0) return; // 定休日
+        const assigned = slotOf(date, s.id)
+          .slice()
+          .sort((a, b) => b.level - a.level || a.name.localeCompare(b.name, 'ja'))
+          .map((e) => {
+            const d = distanceOf(e, s);
+            return { employeeId: e.id, name: e.name, level: e.level, km: d.km, method: d.method };
+          });
         const shortage = s.requiredStaff - assigned.length;
         const leaderMissing = s.leaderLevel > 0 && assigned.length > 0 && !assigned.some((a) => a.level >= s.leaderLevel);
         if (shortage > 0) {
@@ -370,10 +479,9 @@
         }
         dayOut.stores.push({ storeId: s.id, storeName: s.name, required: s.requiredStaff, assigned, shortage, leaderMissing });
       });
-      days.push(dayOut);
+      return dayOut;
     });
 
-    days.sort((a, b) => (a.date < b.date ? -1 : 1));
     Object.values(stats).forEach((st) => st.dates.sort((a, b) => (a.date < b.date ? -1 : 1)));
 
     const employeeStats = {};
