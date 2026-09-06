@@ -1,0 +1,1051 @@
+/*
+ * 一店舗用シフト生成ツールの画面処理
+ * - 入力は localStorage にだけ保存する(外部送信なし)
+ * - シフトの組み立て自体は scheduler.js に任せる
+ */
+(function () {
+  'use strict';
+
+  const S = window.SingleShiftScheduler;
+  const STORAGE_KEY = 'shift-single/v2';
+  const LEGACY_KEY = 'shift-single/v1';
+  const BACKUP_KEY = 'shift-single/last-backup';
+  const BACKUP_REMIND_DAYS = 7;
+  const WEEKDAYS = S.WEEKDAY_LABELS;
+
+  // ---------------- 小物 ----------------
+
+  function $(sel, root) { return (root || document).querySelector(sel); }
+  function $$(sel, root) { return Array.prototype.slice.call((root || document).querySelectorAll(sel)); }
+
+  function el(tag, attrs, children) {
+    const node = document.createElement(tag);
+    if (attrs) {
+      Object.keys(attrs).forEach(function (k) {
+        const v = attrs[k];
+        if (v === null || v === undefined || v === false) return;
+        if (k === 'class') node.className = v;
+        else if (k === 'text') node.textContent = v;
+        else if (k === 'html') node.innerHTML = v;
+        else if (k.slice(0, 2) === 'on') node.addEventListener(k.slice(2), v);
+        else if (v === true) node.setAttribute(k, '');
+        else node.setAttribute(k, v);
+      });
+    }
+    (Array.isArray(children) ? children : children ? [children] : []).forEach(function (c) {
+      if (c === null || c === undefined || c === false) return;
+      node.appendChild(typeof c === 'string' || typeof c === 'number' ? document.createTextNode(String(c)) : c);
+    });
+    return node;
+  }
+
+  function pad2(n) { return String(n).padStart(2, '0'); }
+
+  function localDate(d) {
+    return d.getFullYear() + '-' + pad2(d.getMonth() + 1) + '-' + pad2(d.getDate());
+  }
+
+  // offset 0 = 今月, 1 = 来月
+  function monthRange(offset) {
+    const now = new Date();
+    const m = now.getMonth() + (offset || 0);
+    return {
+      start: localDate(new Date(now.getFullYear(), m, 1)),
+      end: localDate(new Date(now.getFullYear(), m + 1, 0)),
+    };
+  }
+
+  function thisMonth() {
+    return monthRange(0);
+  }
+
+  function nextId(prefix, list) {
+    let max = 0;
+    list.forEach(function (item) {
+      const m = String(item.id || '').match(new RegExp('^' + prefix + '(\\d+)$'));
+      if (m) max = Math.max(max, Number(m[1]));
+    });
+    return prefix + (max + 1);
+  }
+
+  function toIntOrNull(v) {
+    if (v === '' || v === null || v === undefined) return null;
+    const n = Number(v);
+    return Number.isFinite(n) ? Math.round(n) : null;
+  }
+
+  // ---------------- データ ----------------
+
+  function defaultData() {
+    const period = thisMonth();
+    const parts = S.presetToStore('aushop');
+    return {
+      store: {
+        name: '',
+        periodStart: period.start,
+        periodEnd: period.end,
+        closedWeekdays: [],
+        closedDates: [],
+        roles: parts.roles,
+        levelLabels: parts.levelLabels,
+        slots: parts.slots,
+      },
+      staff: [],
+      options: Object.assign({}, S.DEFAULT_OPTIONS),
+    };
+  }
+
+  // v1(フロア/キッチン固定)のデータを v2(役割マスタ)に読み替える
+  function migrateV1(parsed) {
+    const roles = [{ id: 'role1', name: 'フロア' }, { id: 'role2', name: 'キッチン' }];
+    const store = Object.assign({}, parsed.store || {});
+    store.roles = roles;
+    store.levelLabels = S.DEFAULT_LEVEL_LABELS.slice();
+    store.slots = (store.slots || []).map(function (slot) {
+      const copy = Object.assign({}, slot);
+      copy.requiredByRole = { role1: slot.requiredFloor || 0, role2: slot.requiredKitchen || 0 };
+      delete copy.requiredFloor;
+      delete copy.requiredKitchen;
+      return copy;
+    });
+    const staff = (parsed.staff || []).map(function (person) {
+      const copy = Object.assign({}, person);
+      copy.roles = [];
+      if (person.floor !== false) copy.roles.push('role1');
+      if (person.kitchen) copy.roles.push('role2');
+      delete copy.floor;
+      delete copy.kitchen;
+      return copy;
+    });
+    return { store: store, staff: staff, options: parsed.options || {} };
+  }
+
+  function loadData() {
+    try {
+      let raw = localStorage.getItem(STORAGE_KEY);
+      let parsed = raw ? JSON.parse(raw) : null;
+      if (!parsed) {
+        const legacy = localStorage.getItem(LEGACY_KEY);
+        if (!legacy) return defaultData();
+        parsed = migrateV1(JSON.parse(legacy));
+      }
+      const base = defaultData();
+      return {
+        store: Object.assign(base.store, parsed.store || {}),
+        staff: Array.isArray(parsed.staff) ? parsed.staff : [],
+        options: Object.assign(base.options, parsed.options || {}),
+      };
+    } catch (e) {
+      return defaultData();
+    }
+  }
+
+  function save() {
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+    } catch (e) {
+      setStatus('#data-status', '保存できませんでした(ブラウザの設定を確認してください)');
+    }
+  }
+
+  let data = loadData();
+  let lastResult = null;
+  let editingDaysOff = [];
+  let backupNoticeDismissed = false;
+
+  // ---------------- 共通表示 ----------------
+
+  function setStatus(sel, text) {
+    const node = $(sel);
+    if (!node) return;
+    node.textContent = text;
+    if (text) window.setTimeout(function () { if (node.textContent === text) node.textContent = ''; }, 4000);
+  }
+
+  function checkboxLabel(group, value, label, checked) {
+    return el('label', {}, [
+      el('input', { type: 'checkbox', 'data-group': group, value: String(value), checked: checked ? true : null }),
+      label,
+    ]);
+  }
+
+  function checkedValues(container, group) {
+    return $$('input[data-group="' + group + '"]:checked', container).map(function (i) { return i.value; });
+  }
+
+  function weekdaysText(list) {
+    if (!list || list.length === 7) return '毎日';
+    if (!list.length) return 'なし';
+    return list.slice().sort(function (a, b) { return a - b; }).map(function (i) { return WEEKDAYS[i]; }).join('');
+  }
+
+  // ---------------- 試用の案内・バックアップの督促 ----------------
+
+  function renderTrialBanner() {
+    const box = $('#trial-banner');
+    const trial = window.ShiftTrial;
+    if (!trial) { box.hidden = true; return; }
+    const st = trial.status(trial.CONFIG, localDate(new Date()));
+    if (!st.enabled) { box.hidden = true; return; }
+
+    box.textContent = '';
+    box.className = 'trial-banner trial-banner--' + st.phase;
+    box.appendChild(el('strong', { text: st.storeName ? st.storeName + ' — 試用版' : '試用版' }));
+    box.appendChild(el('span', { text: ' ' + st.message }));
+    if (st.contact) {
+      box.appendChild(el('span', { class: 'trial-banner__contact', text: 'ご相談: ' + st.contact }));
+    }
+    box.hidden = false;
+  }
+
+  function lastBackupAt() {
+    try {
+      const v = localStorage.getItem(BACKUP_KEY);
+      return v && /^\d{4}-\d{2}-\d{2}$/.test(v) ? v : '';
+    } catch (e) {
+      return '';
+    }
+  }
+
+  function markBackedUp() {
+    try {
+      localStorage.setItem(BACKUP_KEY, localDate(new Date()));
+    } catch (e) { /* 保存できなくても動作に影響はない */ }
+    renderBackupNotice();
+  }
+
+  function daysSince(dateStr) {
+    const a = new Date(dateStr + 'T00:00:00Z').getTime();
+    const b = new Date(localDate(new Date()) + 'T00:00:00Z').getTime();
+    return Math.round((b - a) / 86400000);
+  }
+
+  // データはこの端末のブラウザにしか無いので、書き出しをうながす
+  function renderBackupNotice() {
+    const notice = $('#backup-notice');
+    const status = $('#backup-status');
+    const last = lastBackupAt();
+    const hasData = data.staff.length > 0;
+
+    if (status) {
+      status.textContent = last
+        ? '最終バックアップ: ' + last.replace(/-/g, '/') + '(' + daysSince(last) + '日前)'
+        : 'まだバックアップしていません。「JSON を書き出す」で保存できます。';
+    }
+
+    if (!hasData || backupNoticeDismissed) { notice.hidden = true; return; }
+    const overdue = !last || daysSince(last) >= BACKUP_REMIND_DAYS;
+    if (!overdue) { notice.hidden = true; return; }
+
+    notice.textContent = '';
+    notice.appendChild(el('span', {
+      text: last
+        ? 'バックアップから ' + daysSince(last) + ' 日たっています。データはこの端末のブラウザにだけ保存されています。'
+        : 'データはこの端末のブラウザにだけ保存されています。念のためバックアップを取ってください。',
+    }));
+    notice.appendChild(el('button', {
+      type: 'button', class: 'btn btn-small', text: 'いますぐ書き出す',
+      onclick: function () { exportJson(); },
+    }));
+    notice.appendChild(el('button', {
+      type: 'button', class: 'btn btn-small', text: 'あとで',
+      onclick: function () { backupNoticeDismissed = true; notice.hidden = true; },
+    }));
+    notice.hidden = false;
+  }
+
+  function exportJson() {
+    download('shift-single-data.json', JSON.stringify(data, null, 2), 'application/json');
+    markBackedUp();
+    setStatus('#data-status', '書き出しました');
+  }
+
+  // ---------------- タブ ----------------
+
+  function initTabs() {
+    $$('.tab').forEach(function (tab) {
+      tab.addEventListener('click', function () {
+        const name = tab.dataset.tab;
+        $$('.tab').forEach(function (t) {
+          const active = t === tab;
+          t.classList.toggle('is-active', active);
+          t.setAttribute('aria-selected', active ? 'true' : 'false');
+        });
+        $$('.panel').forEach(function (p) { p.hidden = p.id !== 'tab-' + name; });
+        if (name === 'staff') renderStaffCheckboxes();
+      });
+    });
+  }
+
+  // ---------------- スタッフ ----------------
+
+  function renderStaffCheckboxes() {
+    const rl = $('#staff-roles');
+    const shownRoles = $$('input[data-group="role"]', rl).map(function (i) { return i.value; });
+    const currentRoles = checkedValues(rl, 'role');
+    rl.textContent = '';
+    if (!data.store.roles.length) {
+      rl.appendChild(el('span', { class: 'status', text: '役割を使わない設定です(「店舗設定」タブで追加できます)' }));
+    } else {
+      data.store.roles.forEach(function (role) {
+        const known = shownRoles.indexOf(role.id) >= 0;
+        rl.appendChild(checkboxLabel('role', role.id, role.name, known ? currentRoles.indexOf(role.id) >= 0 : true));
+      });
+    }
+
+    const wd = $('#staff-weekdays');
+    const current = wd.children.length ? checkedValues(wd, 'weekday') : null;
+    wd.textContent = '';
+    WEEKDAYS.forEach(function (label, i) {
+      wd.appendChild(checkboxLabel('weekday', i, label, current ? current.indexOf(String(i)) >= 0 : true));
+    });
+
+    const levelSelect = $('#form-staff [name=level]');
+    const currentLevel = levelSelect.value || '3';
+    levelSelect.textContent = '';
+    data.store.levelLabels.forEach(function (label, i) {
+      levelSelect.appendChild(el('option', { value: String(i + 1), text: (i + 1) + '(' + label + ')' }));
+    });
+    levelSelect.value = currentLevel;
+
+    const sl = $('#staff-slots');
+    // 画面に出ていた時間帯だけチェック状態を引き継ぎ、新しく増えた時間帯は「対応できる」にしておく
+    const shownSlots = $$('input[data-group="slot"]', sl).map(function (i) { return i.value; });
+    const currentSlots = checkedValues(sl, 'slot');
+    sl.textContent = '';
+    if (!data.store.slots.length) {
+      sl.appendChild(el('span', { class: 'status', text: '「店舗設定」タブで時間帯を追加してください' }));
+      return;
+    }
+    data.store.slots.forEach(function (slot) {
+      const known = shownSlots.indexOf(slot.id) >= 0;
+      sl.appendChild(checkboxLabel('slot', slot.id, slot.name, known ? currentSlots.indexOf(slot.id) >= 0 : true));
+    });
+  }
+
+  function renderDaysOffChips() {
+    const box = $('#staff-daysoff');
+    box.textContent = '';
+    editingDaysOff.slice().sort().forEach(function (date) {
+      box.appendChild(el('span', { class: 'chip' }, [
+        date,
+        el('button', {
+          type: 'button', 'aria-label': date + ' を削除', text: '×',
+          onclick: function () {
+            editingDaysOff = editingDaysOff.filter(function (d) { return d !== date; });
+            renderDaysOffChips();
+          },
+        }),
+      ]));
+    });
+  }
+
+  function resetStaffForm() {
+    const form = $('#form-staff');
+    form.reset();
+    form.elements.id.value = '';
+    editingDaysOff = [];
+    renderDaysOffChips();
+    renderStaffCheckboxes();
+    $$('#staff-weekdays input, #staff-slots input, #staff-roles input').forEach(function (i) { i.checked = true; });
+    $('#staff-form-title').textContent = 'スタッフを追加';
+    $('#btn-staff-submit').textContent = '追加';
+    $('#btn-staff-cancel').hidden = true;
+  }
+
+  function fillStaffForm(person) {
+    const form = $('#form-staff');
+    form.elements.id.value = person.id;
+    form.elements.name.value = person.name || '';
+    form.elements.level.value = String(person.level || 3);
+    form.elements.targetDays.value = person.targetDays === undefined ? 20 : person.targetDays;
+    form.elements.maxConsecutiveDays.value = person.maxConsecutiveDays ? person.maxConsecutiveDays : '';
+    form.elements.note.value = person.note || '';
+
+    renderStaffCheckboxes();
+    const roleIds = Array.isArray(person.roles) ? person.roles.map(String) : null;
+    $$('#staff-roles input').forEach(function (i) { i.checked = roleIds ? roleIds.indexOf(i.value) >= 0 : true; });
+    const wdays = Array.isArray(person.availableWeekdays) ? person.availableWeekdays.map(String) : null;
+    $$('#staff-weekdays input').forEach(function (i) { i.checked = wdays ? wdays.indexOf(i.value) >= 0 : true; });
+    const slots = Array.isArray(person.availableSlots) ? person.availableSlots.map(String) : null;
+    $$('#staff-slots input').forEach(function (i) { i.checked = slots ? slots.indexOf(i.value) >= 0 : true; });
+
+    editingDaysOff = Array.isArray(person.daysOff) ? person.daysOff.slice() : [];
+    renderDaysOffChips();
+
+    $('#staff-form-title').textContent = 'スタッフを編集';
+    $('#btn-staff-submit').textContent = '保存';
+    $('#btn-staff-cancel').hidden = false;
+    $('#form-staff').scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }
+
+  function onStaffSubmit(e) {
+    e.preventDefault();
+    const form = e.target;
+    const name = form.elements.name.value.trim();
+    if (!name) return;
+    const roles = checkedValues($('#staff-roles'), 'role');
+    if (data.store.roles.length && !roles.length) {
+      setStatus('#staff-status', 'できる役割を 1 つ以上選んでください');
+      return;
+    }
+    const weekdays = checkedValues($('#staff-weekdays'), 'weekday').map(Number);
+    if (!weekdays.length) {
+      setStatus('#staff-status', '勤務できる曜日を 1 つ以上選んでください');
+      return;
+    }
+    const availableSlots = checkedValues($('#staff-slots'), 'slot');
+    if (data.store.slots.length && !availableSlots.length) {
+      setStatus('#staff-status', '対応できる時間帯を 1 つ以上選んでください');
+      return;
+    }
+    const person = {
+      id: form.elements.id.value || nextId('staff', data.staff),
+      name: name,
+      level: Number(form.elements.level.value),
+      roles: roles,
+      targetDays: Math.max(0, Number(form.elements.targetDays.value) || 0),
+      availableWeekdays: weekdays,
+      availableSlots: availableSlots,
+      daysOff: editingDaysOff.slice().sort(),
+      maxConsecutiveDays: toIntOrNull(form.elements.maxConsecutiveDays.value) || 0,
+      note: form.elements.note.value.trim(),
+    };
+    const idx = data.staff.findIndex(function (p) { return p.id === person.id; });
+    if (idx >= 0) data.staff[idx] = person;
+    else data.staff.push(person);
+    save();
+    resetStaffForm();
+    renderStaffTable();
+    renderCounts();
+    renderBackupNotice();
+    setStatus('#staff-status', idx >= 0 ? '保存しました' : name + ' を追加しました');
+  }
+
+  function renderStaffTable() {
+    const table = $('#staff-table');
+    table.textContent = '';
+    if (!data.staff.length) {
+      table.appendChild(el('tbody', {}, el('tr', {}, el('td', { class: 'none', text: 'まだスタッフが登録されていません。上のフォームから追加するか、「データ」タブでサンプルを読み込んでください。' }))));
+      return;
+    }
+    const head = ['名前', 'レベル'].concat(
+      data.store.roles.map(function (r) { return r.name; }),
+      ['出勤日数', '勤務曜日', '対応時間帯', '希望休', 'メモ', '']
+    );
+    table.appendChild(el('thead', {}, el('tr', {}, head.map(function (h) { return el('th', { text: h }); }))));
+
+    const slotName = {};
+    data.store.slots.forEach(function (s) { slotName[s.id] = s.name; });
+
+    const body = el('tbody');
+    data.staff.forEach(function (p) {
+      const slots = Array.isArray(p.availableSlots) ? p.availableSlots : data.store.slots.map(function (s) { return s.id; });
+      const slotText = slots.length === data.store.slots.length ? 'すべて'
+        : (slots.map(function (id) { return slotName[id] || id; }).join('・') || 'なし');
+      const personRoles = Array.isArray(p.roles) ? p.roles : data.store.roles.map(function (r) { return r.id; });
+      body.appendChild(el('tr', {}, [
+        el('td', { text: p.name }),
+        el('td', { class: 'num', text: p.level }),
+      ].concat(
+        data.store.roles.map(function (r) {
+          return el('td', { text: personRoles.indexOf(r.id) >= 0 ? '○' : '—' });
+        }),
+        [
+        el('td', { class: 'num', text: (p.targetDays || 0) + '日' }),
+        el('td', { text: weekdaysText(p.availableWeekdays) }),
+        el('td', { text: slotText }),
+        el('td', { text: (p.daysOff && p.daysOff.length) ? p.daysOff.length + '日' : '—', title: (p.daysOff || []).join(' ') }),
+        el('td', { text: p.note || '' }),
+        el('td', {}, el('div', { class: 'btn-group' }, [
+          el('button', { type: 'button', class: 'btn btn-small', text: '編集', onclick: function () { fillStaffForm(p); } }),
+          el('button', {
+            type: 'button', class: 'btn btn-small', text: '複製',
+            onclick: function () {
+              const copy = JSON.parse(JSON.stringify(p));
+              copy.id = nextId('staff', data.staff);
+              copy.name = p.name + ' のコピー';
+              data.staff.push(copy);
+              save(); renderStaffTable(); renderCounts();
+            },
+          }),
+          el('button', {
+            type: 'button', class: 'btn btn-small btn-danger', text: '削除',
+            onclick: function () {
+              if (!window.confirm(p.name + ' を削除しますか?')) return;
+              data.staff = data.staff.filter(function (x) { return x.id !== p.id; });
+              save(); resetStaffForm(); renderStaffTable(); renderCounts();
+            },
+          }),
+        ])),
+        ]
+      )));
+    });
+    table.appendChild(body);
+  }
+
+  // ---------------- 店舗設定 ----------------
+
+  function renderStoreForm() {
+    const form = $('#form-store');
+    form.elements.name.value = data.store.name || '';
+    form.elements.periodStart.value = data.store.periodStart || '';
+    form.elements.periodEnd.value = data.store.periodEnd || '';
+
+    const box = $('#store-closed-weekdays');
+    box.textContent = '';
+    WEEKDAYS.forEach(function (label, i) {
+      const input = el('input', {
+        type: 'checkbox', value: String(i),
+        checked: (data.store.closedWeekdays || []).indexOf(i) >= 0 ? true : null,
+        onchange: function () {
+          const list = (data.store.closedWeekdays || []).filter(function (w) { return w !== i; });
+          if (input.checked) list.push(i);
+          data.store.closedWeekdays = list.sort(function (a, b) { return a - b; });
+          save();
+        },
+      });
+      box.appendChild(el('label', {}, [input, label]));
+    });
+
+    renderClosedDates();
+  }
+
+  function renderClosedDates() {
+    const box = $('#store-closed-dates');
+    box.textContent = '';
+    (data.store.closedDates || []).slice().sort().forEach(function (date) {
+      box.appendChild(el('span', { class: 'chip' }, [
+        date,
+        el('button', {
+          type: 'button', 'aria-label': date + ' を削除', text: '×',
+          onclick: function () {
+            data.store.closedDates = data.store.closedDates.filter(function (d) { return d !== date; });
+            save(); renderClosedDates();
+          },
+        }),
+      ]));
+    });
+  }
+
+  function renderRoles() {
+    const list = $('#role-list');
+    list.textContent = '';
+    if (!data.store.roles.length) {
+      list.appendChild(el('p', { class: 'slot-empty', text: '役割なし(誰でもどの枠にも入れる設定です)' }));
+      return;
+    }
+    const grid = el('div', { class: 'form-grid' });
+    data.store.roles.forEach(function (role, index) {
+      const input = el('input', { type: 'text', value: role.name, placeholder: '役割名' });
+      input.addEventListener('input', function () {
+        role.name = input.value;
+        save();
+      });
+      input.addEventListener('change', function () {
+        renderSlots();
+        renderStaffTable();
+      });
+      const remove = el('button', {
+        type: 'button', class: 'btn btn-small btn-danger', text: '削除',
+        onclick: function () {
+          if (!window.confirm('役割「' + role.name + '」を削除しますか?(スタッフ・時間帯の設定からも外れます)')) return;
+          data.store.roles.splice(index, 1);
+          data.store.slots.forEach(function (slot) {
+            if (slot.requiredByRole) delete slot.requiredByRole[role.id];
+          });
+          data.staff.forEach(function (p) {
+            if (Array.isArray(p.roles)) p.roles = p.roles.filter(function (id) { return id !== role.id; });
+          });
+          save(); renderRoles(); renderSlots(); renderStaffCheckboxes(); renderStaffTable();
+        },
+      });
+      grid.appendChild(el('label', {}, ['役割 ' + (index + 1), el('div', { class: 'chip-input' }, [input, remove])]));
+    });
+    list.appendChild(grid);
+  }
+
+  function renderLevelLabels() {
+    const box = $('#level-labels');
+    box.textContent = '';
+    data.store.levelLabels.forEach(function (label, i) {
+      const input = el('input', { type: 'text', value: label, placeholder: S.DEFAULT_LEVEL_LABELS[i] });
+      input.addEventListener('input', function () {
+        data.store.levelLabels[i] = input.value;
+        save();
+      });
+      box.appendChild(el('label', {}, ['レベル' + (i + 1), input]));
+    });
+  }
+
+  function renderPresetOptions() {
+    const presetSelect = $('#preset-select');
+    const sampleSelect = $('#sample-select');
+    presetSelect.textContent = '';
+    sampleSelect.textContent = '';
+    Object.keys(S.PRESETS).forEach(function (key) {
+      presetSelect.appendChild(el('option', { value: key, text: S.PRESETS[key].label }));
+      sampleSelect.appendChild(el('option', { value: key, text: S.PRESETS[key].label }));
+    });
+  }
+
+  // ひな形の適用: 役割・レベルの呼び方・時間帯を差し替える(スタッフはそのまま残す)
+  function applyPreset(key) {
+    const parts = S.presetToStore(key);
+    data.store.roles = parts.roles;
+    data.store.levelLabels = parts.levelLabels;
+    data.store.slots = parts.slots;
+    const roleIds = parts.roles.map(function (r) { return r.id; });
+    const slotIds = parts.slots.map(function (s) { return s.id; });
+    data.staff.forEach(function (p) {
+      p.roles = Array.isArray(p.roles) ? p.roles.filter(function (id) { return roleIds.indexOf(id) >= 0; }) : roleIds.slice();
+      if (!p.roles.length) p.roles = roleIds.slice();
+      p.availableSlots = slotIds.slice();
+    });
+    save();
+    renderAll();
+  }
+
+  function renderSlots() {
+    const list = $('#slot-list');
+    list.textContent = '';
+    if (!data.store.slots.length) {
+      list.appendChild(el('p', { class: 'slot-empty', text: '時間帯がありません。「時間帯を追加」で作ってください。' }));
+      renderCounts();
+      return;
+    }
+
+    data.store.slots.forEach(function (slot, index) {
+      const card = el('div', { class: 'slot-card' });
+      card.appendChild(el('div', { class: 'slot-card__head' }, [
+        el('h4', { text: slot.name || '時間帯' + (index + 1) }),
+        el('button', {
+          type: 'button', class: 'btn btn-small btn-danger', text: '削除',
+          onclick: function () {
+            if (!window.confirm('「' + slot.name + '」を削除しますか?')) return;
+            data.store.slots.splice(index, 1);
+            data.staff.forEach(function (p) {
+              if (Array.isArray(p.availableSlots)) {
+                p.availableSlots = p.availableSlots.filter(function (id) { return id !== slot.id; });
+              }
+            });
+            save(); renderSlots(); renderStaffTable(); renderCounts();
+          },
+        }),
+      ]));
+
+      function field(labelText, input, hint) {
+        return el('label', {}, [labelText, input, hint ? el('small', { text: hint }) : null]);
+      }
+
+      function bind(name, type, attrs) {
+        const input = el('input', Object.assign({ type: type, value: slot[name] === null || slot[name] === undefined ? '' : slot[name] }, attrs || {}));
+        input.addEventListener('input', function () {
+          if (type === 'number') {
+            slot[name] = name === 'requiredWeekend' ? toIntOrNull(input.value) : Math.max(0, Number(input.value) || 0);
+          } else {
+            slot[name] = input.value;
+          }
+          save();
+        });
+        return input;
+      }
+
+      const grid = el('div', { class: 'form-grid' }, [
+        field('名前', bind('name', 'text', { placeholder: '早番' })),
+        field('開始', bind('start', 'time')),
+        field('終了', bind('end', 'time')),
+        field('必要人数(平日)', bind('required', 'number', { min: '0', max: '30', step: '1' })),
+        field('必要人数(土日)', bind('requiredWeekend', 'number', { min: '0', max: '30', step: '1', placeholder: '平日と同じ' }), '空欄なら平日と同じ'),
+      ]);
+
+      // 役割ごとの必須人数
+      slot.requiredByRole = slot.requiredByRole || {};
+      data.store.roles.forEach(function (role) {
+        const input = el('input', {
+          type: 'number', min: '0', max: '30', step: '1',
+          value: slot.requiredByRole[role.id] === undefined ? 0 : slot.requiredByRole[role.id],
+        });
+        input.addEventListener('input', function () {
+          slot.requiredByRole[role.id] = Math.max(0, Number(input.value) || 0);
+          save();
+        });
+        grid.appendChild(el('label', {}, ['うち' + role.name + '必須', input]));
+      });
+
+      const leader = el('select', {}, [0, 1, 2, 3, 4, 5].map(function (lv) {
+        return el('option', { value: String(lv), selected: Number(slot.leaderLevel || 0) === lv ? true : null, text: lv === 0 ? '指定なし' : 'レベル' + lv + '以上を 1 名' });
+      }));
+      leader.addEventListener('change', function () { slot.leaderLevel = Number(leader.value); save(); });
+      grid.appendChild(field('リーダー要件', leader, 'その枠に必ず入れたいレベル'));
+
+      const wdBox = el('div', { class: 'check-row' });
+      WEEKDAYS.forEach(function (label, i) {
+        const input = el('input', {
+          type: 'checkbox', value: String(i),
+          checked: (slot.weekdays || [0, 1, 2, 3, 4, 5, 6]).indexOf(i) >= 0 ? true : null,
+          onchange: function () {
+            const cur = (slot.weekdays || [0, 1, 2, 3, 4, 5, 6]).filter(function (w) { return w !== i; });
+            if (input.checked) cur.push(i);
+            slot.weekdays = cur.sort(function (a, b) { return a - b; });
+            save();
+          },
+        });
+        wdBox.appendChild(el('label', {}, [input, label]));
+      });
+      grid.appendChild(el('fieldset', { class: 'form-grid__full' }, [el('legend', { text: 'この時間帯を設ける曜日' }), wdBox]));
+
+      card.appendChild(grid);
+      list.appendChild(card);
+    });
+    renderCounts();
+  }
+
+  function renderCounts() {
+    $('#count-staff').textContent = String(data.staff.length);
+    $('#count-slots').textContent = String(data.store.slots.length);
+  }
+
+  // ---------------- 生成 ----------------
+
+  function fillOptionForm() {
+    const form = $('#form-generate');
+    const o = data.options || {};
+    ['maxConsecutiveDays', 'weightNeed', 'weightContinuity', 'weightLevel', 'weightConsecutive'].forEach(function (k) {
+      if (form.elements[k] && o[k] !== undefined && o[k] !== null) form.elements[k].value = o[k];
+    });
+    form.elements.improve.checked = o.improve !== false;
+  }
+
+  function readOptions() {
+    const form = $('#form-generate');
+    return {
+      maxConsecutiveDays: Math.max(0, Number(form.elements.maxConsecutiveDays.value) || 0),
+      weightNeed: Math.max(0, Number(form.elements.weightNeed.value) || 0),
+      weightContinuity: Math.max(0, Number(form.elements.weightContinuity.value) || 0),
+      weightLevel: Math.max(0, Number(form.elements.weightLevel.value) || 0),
+      weightConsecutive: Math.max(0, Number(form.elements.weightConsecutive.value) || 0),
+      improve: form.elements.improve.checked,
+    };
+  }
+
+  function onGenerate(e) {
+    e.preventDefault();
+    data.options = readOptions();
+    save();
+    const result = S.generate({ store: data.store, staff: data.staff, options: data.options });
+    lastResult = result;
+    renderResult(result);
+    setStatus('#generate-status', result.ok ? '生成しました' : '生成できませんでした');
+  }
+
+  function renderResult(result) {
+    const box = $('#result');
+    box.hidden = false;
+    const warnBox = $('#result-warnings');
+    warnBox.textContent = '';
+    $('#result-matrix').textContent = '';
+    $('#result-staff').textContent = '';
+    $('#result-stats').textContent = '';
+
+    if (!result.ok) {
+      warnBox.appendChild(el('div', { class: 'notice notice-error' }, [
+        el('strong', { text: '生成できませんでした' }),
+        el('ul', {}, result.errors.map(function (m) { return el('li', { text: m }); })),
+      ]));
+      $('#result-period').textContent = '';
+      return;
+    }
+
+    const st = result.stats;
+    $('#result-period').textContent = (result.store.name ? result.store.name + ' / ' : '')
+      + result.store.periodStart + ' 〜 ' + result.store.periodEnd;
+
+    const assignedDays = result.staffSummary.reduce(function (n, r) { return n + r.assignedDays; }, 0);
+    [
+      ['営業日数', st.openDays + '日', '(定休 ' + st.closedDays + '日)'],
+      ['必要のべ人数', st.requiredTotal + '人', ''],
+      ['割り当て', st.assignedTotal + '人', st.shortage > 0 ? '(不足 ' + st.shortage + '人)' : '(不足なし)'],
+      ['充足率', Math.round(st.fillRate * 100) + '%', ''],
+      ['出勤日数の合計', assignedDays + '日', '/ 目標 ' + st.targetTotal + '日'],
+    ].forEach(function (row) {
+      $('#result-stats').appendChild(el('li', {}, [row[0] + ' ', el('b', { text: row[1] }), ' ' + row[2]]));
+    });
+
+    renderWarnings(warnBox, result);
+    renderMatrix(result);
+    renderStaffResult(result);
+  }
+
+  function renderWarnings(box, result) {
+    const groups = {
+      shortage: { title: '人数が足りない枠', cls: 'notice-error', items: [] },
+      leader: { title: 'リーダー要件を満たせない枠', cls: 'notice-warn', items: [] },
+      unmet: { title: '出勤日数が目標に届かないスタッフ', cls: 'notice-warn', items: [] },
+      setup: { title: '設定の確認', cls: 'notice-warn', items: [] },
+    };
+    result.warnings.forEach(function (w) {
+      if (groups[w.type]) groups[w.type].items.push(w.message);
+    });
+
+    let any = false;
+    Object.keys(groups).forEach(function (key) {
+      const g = groups[key];
+      if (!g.items.length) return;
+      any = true;
+      const details = el('details', { class: 'notice ' + g.cls, open: g.items.length <= 5 ? true : null }, [
+        el('summary', { text: g.title + '(' + g.items.length + '件)' }),
+        el('ul', {}, g.items.map(function (m) { return el('li', { text: m }); })),
+      ]);
+      box.appendChild(details);
+    });
+    if (!any) {
+      box.appendChild(el('div', { class: 'notice notice-ok', text: '必要人数・リーダー要件・出勤日数をすべて満たすシフトができました。' }));
+    }
+  }
+
+  function renderMatrix(result) {
+    const table = $('#result-matrix');
+    const slots = result.slots;
+    table.appendChild(el('thead', {}, el('tr', {}, [el('th', { text: '日付' })].concat(
+      slots.map(function (s) {
+        return el('th', {}, [s.name, s.start || s.end ? el('small', { text: ' ' + (s.start || '') + '〜' + (s.end || '') }) : null]);
+      })
+    ))));
+
+    const matrix = S.toMatrix(result);
+    const body = el('tbody');
+    matrix.forEach(function (row) {
+      const weekendClass = row.weekday === 0 ? 'sun' : row.weekday === 6 ? 'sat' : '';
+      const tr = el('tr', { class: (row.weekday === 0 || row.weekday === 6) ? 'is-weekend' : null });
+      tr.appendChild(el('td', {}, [
+        row.date.slice(5).replace('-', '/') + ' ',
+        el('span', { class: weekendClass, text: '(' + row.weekdayLabel + ')' }),
+      ]));
+      if (row.closed) {
+        tr.appendChild(el('td', { class: 'closed', colspan: String(Math.max(1, slots.length)), text: '定休日' }));
+        body.appendChild(tr);
+        return;
+      }
+      row.cells.forEach(function (cell) {
+        if (!cell) {
+          tr.appendChild(el('td', { class: 'none', text: '—' }));
+          return;
+        }
+        const ul = el('ul', {}, cell.assigned.map(function (a) {
+          return el('li', {}, [
+            el('span', { class: 'tag ' + (a.role === S.ANY_ROLE ? 'tag-any' : 'tag-role'), text: a.roleLabel }),
+            a.name,
+            a.isLeader ? el('span', { class: 'leader-mark', text: ' ★' }) : null,
+            el('small', { text: ' Lv' + a.level }),
+          ]);
+        }));
+        const td = el('td', {}, ul);
+        if (cell.unfilled.length) {
+          td.appendChild(el('div', {}, el('span', { class: 'shortage', text: '不足 ' + cell.unfilled.length + '人' })));
+        }
+        if (cell.noLeader) {
+          td.appendChild(el('div', {}, el('span', { class: 'shortage', text: 'リーダー不在' })));
+        }
+        tr.appendChild(td);
+      });
+      body.appendChild(tr);
+    });
+    table.appendChild(body);
+  }
+
+  function renderStaffResult(result) {
+    const table = $('#result-staff');
+    const slots = result.slots;
+    const roles = result.roles || [];
+    const head = ['スタッフ', 'レベル']
+      .concat(roles.map(function (r) { return r.name; }), ['目標', '実績', '過不足'],
+        slots.map(function (s) { return s.name; }), ['最大連勤']);
+    table.appendChild(el('thead', {}, el('tr', {}, head.map(function (h, i) {
+      return el('th', { class: i >= 1 ? 'num' : null, text: h });
+    }))));
+
+    const body = el('tbody');
+    result.staffSummary.forEach(function (row) {
+      body.appendChild(el('tr', {}, [
+        el('td', { text: row.name }),
+        el('td', { class: 'num', text: row.level }),
+      ].concat(
+        roles.map(function (r) {
+          return el('td', { class: 'num', text: row.roles.indexOf(r.id) >= 0 ? '○' : '—' });
+        }),
+        [
+          el('td', { class: 'num', text: row.targetDays }),
+          el('td', { class: 'num', text: row.assignedDays }),
+          el('td', { class: 'num' + (row.diff < 0 ? ' diff-minus' : ''), text: row.diff === 0 ? '±0' : (row.diff > 0 ? '+' : '') + row.diff }),
+        ],
+        slots.map(function (s) { return el('td', { class: 'num', text: row.bySlot[s.id] || 0 }); }),
+        [el('td', { class: 'num', text: row.maxConsecutive })]
+      )));
+    });
+    table.appendChild(body);
+  }
+
+  // ---------------- 書き出し ----------------
+
+  function download(filename, text, mime) {
+    const blob = new Blob([text], { type: mime });
+    const url = URL.createObjectURL(blob);
+    const a = el('a', { href: url, download: filename });
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    window.setTimeout(function () { URL.revokeObjectURL(url); }, 1000);
+  }
+
+  function csvName(kind) {
+    const s = (data.store.periodStart || '').replace(/-/g, '');
+    return 'shift-' + kind + (s ? '-' + s : '') + '.csv';
+  }
+
+  // ---------------- 起動 ----------------
+
+  function renderAll() {
+    renderTrialBanner();
+    renderBackupNotice();
+    renderStoreForm();
+    renderRoles();
+    renderLevelLabels();
+    renderSlots();
+    renderStaffCheckboxes();
+    renderStaffTable();
+    renderCounts();
+    fillOptionForm();
+  }
+
+  function init() {
+    initTabs();
+    renderPresetOptions();
+
+    $('#form-staff').addEventListener('submit', onStaffSubmit);
+    $('#btn-staff-cancel').addEventListener('click', resetStaffForm);
+    $('#btn-add-dayoff').addEventListener('click', function () {
+      const input = $('#staff-dayoff-date');
+      const value = input.value;
+      if (!value) return;
+      if (editingDaysOff.indexOf(value) < 0) editingDaysOff.push(value);
+      input.value = '';
+      renderDaysOffChips();
+    });
+
+    $('#form-store').addEventListener('input', function (e) {
+      const name = e.target.name;
+      if (!name) return;
+      data.store[name] = e.target.value;
+      save();
+    });
+    function setPeriod(offset) {
+      const range = monthRange(offset);
+      data.store.periodStart = range.start;
+      data.store.periodEnd = range.end;
+      save();
+      renderStoreForm();
+      setStatus('#data-status', '');
+    }
+    $('#btn-period-this').addEventListener('click', function () { setPeriod(0); });
+    $('#btn-period-next').addEventListener('click', function () { setPeriod(1); });
+
+    $('#btn-add-closed-date').addEventListener('click', function () {
+      const input = $('#store-closed-date');
+      const value = input.value;
+      if (!value) return;
+      data.store.closedDates = data.store.closedDates || [];
+      if (data.store.closedDates.indexOf(value) < 0) data.store.closedDates.push(value);
+      input.value = '';
+      save();
+      renderClosedDates();
+    });
+    $('#btn-add-role').addEventListener('click', function () {
+      const id = nextId('role', data.store.roles);
+      data.store.roles.push({ id: id, name: '役割' + (data.store.roles.length + 1) });
+      // 既存スタッフは新しい役割もできる扱いにする
+      data.staff.forEach(function (p) {
+        if (Array.isArray(p.roles)) p.roles.push(id);
+      });
+      save(); renderRoles(); renderSlots(); renderStaffCheckboxes(); renderStaffTable();
+    });
+    $('#btn-apply-preset').addEventListener('click', function () {
+      const key = $('#preset-select').value;
+      if (!window.confirm('「' + S.PRESETS[key].label + '」のひな形で、役割・レベルの呼び方・時間帯を差し替えます。よろしいですか?')) return;
+      applyPreset(key);
+      setStatus('#data-status', '');
+    });
+    $('#btn-add-slot').addEventListener('click', function () {
+      const id = nextId('slot', data.store.slots);
+      data.store.slots.push({
+        id: id, name: '時間帯' + (data.store.slots.length + 1), start: '', end: '',
+        required: 2, requiredWeekend: null, requiredByRole: {}, leaderLevel: 0,
+        weekdays: [0, 1, 2, 3, 4, 5, 6],
+      });
+      // 既存スタッフは新しい時間帯にも対応できる扱いにする
+      data.staff.forEach(function (p) {
+        if (Array.isArray(p.availableSlots)) p.availableSlots.push(id);
+      });
+      save();
+      renderSlots();
+      renderStaffTable();
+    });
+
+    $('#form-generate').addEventListener('submit', onGenerate);
+    $('#btn-csv-date').addEventListener('click', function () {
+      if (lastResult && lastResult.ok) download(csvName('by-date'), '﻿' + S.toCsvByDate(lastResult), 'text/csv;charset=utf-8');
+    });
+    $('#btn-csv-staff').addEventListener('click', function () {
+      if (lastResult && lastResult.ok) download(csvName('by-staff'), '﻿' + S.toCsvByStaff(lastResult), 'text/csv;charset=utf-8');
+    });
+    $('#btn-print').addEventListener('click', function () { window.print(); });
+
+    $('#btn-sample').addEventListener('click', function () {
+      if (data.staff.length && !window.confirm('いまの内容をサンプルで置き換えますか?')) return;
+      const sample = S.sampleData($('#sample-select').value);
+      data.store = sample.store;
+      data.staff = sample.staff;
+      save();
+      renderAll();
+      setStatus('#data-status', 'サンプルを読み込みました');
+    });
+    $('#btn-export').addEventListener('click', exportJson);
+    $('#btn-import').addEventListener('click', function () { $('#import-file').click(); });
+    $('#import-file').addEventListener('change', function (e) {
+      const file = e.target.files && e.target.files[0];
+      if (!file) return;
+      const reader = new FileReader();
+      reader.onload = function () {
+        try {
+          const parsed = JSON.parse(String(reader.result));
+          if (!parsed || typeof parsed !== 'object' || !parsed.store) throw new Error('形式が違います');
+          data = {
+            store: Object.assign(defaultData().store, parsed.store),
+            staff: Array.isArray(parsed.staff) ? parsed.staff : [],
+            options: Object.assign(Object.assign({}, S.DEFAULT_OPTIONS), parsed.options || {}),
+          };
+          save();
+          renderAll();
+          setStatus('#data-status', '読み込みました');
+        } catch (err) {
+          setStatus('#data-status', '読み込めませんでした(JSON の形式を確認してください)');
+        }
+      };
+      reader.readAsText(file);
+      e.target.value = '';
+    });
+    $('#btn-clear').addEventListener('click', function () {
+      if (!window.confirm('登録したスタッフ・店舗設定をすべて消します。よろしいですか?')) return;
+      data = defaultData();
+      save();
+      renderAll();
+      lastResult = null;
+      $('#result').hidden = true;
+      setStatus('#data-status', 'すべて消しました');
+    });
+
+    renderAll();
+  }
+
+  document.addEventListener('DOMContentLoaded', init);
+})();

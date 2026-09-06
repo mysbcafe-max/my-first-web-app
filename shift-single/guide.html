@@ -1,0 +1,129 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="robots" content="noindex">
+  <title>ご利用案内 | シフト生成ツール(試用版)</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="app-header">
+    <div class="app-header__inner">
+      <h1 class="app-title">シフト生成ツール — ご利用案内(試用版)</h1>
+    </div>
+  </header>
+
+  <main class="app-main guide">
+
+    <div id="trial-banner" class="trial-banner" hidden></div>
+
+    <section class="panel">
+      <h2>このツールについて</h2>
+      <p>
+        スタッフの「できる役割」「レベル」「今月の出勤日数」「希望休」を登録しておくと、
+        時間帯ごとの必要人数を満たすシフト表を自動で作ります。
+        できあがった表は印刷や CSV(Excel で開けます)で書き出せます。
+      </p>
+      <p class="guide-cta">
+        <a class="btn btn-primary btn-large" href="./">ツールを開く</a>
+        <small>ブックマークして、毎回ここから開いてください</small>
+      </p>
+    </section>
+
+    <section class="panel">
+      <h2>はじめかた(初回だけ 15 分ほど)</h2>
+      <ol class="guide-steps">
+        <li>
+          <strong>役割を決める</strong>
+          <p>「店舗設定」タブを開きます。業態のひな形(au ショップ / 飲食店 / 小売)を選んで「ひな形を適用」すると、役割・時間帯がまとめて入ります。役割名は自由に変えられます(例: フロア / カウンター / 事務)。</p>
+        </li>
+        <li>
+          <strong>時間帯と必要人数を入れる</strong>
+          <p>早番・遅番などの時間帯ごとに、平日と土日の必要人数、そのうち各役割で必ず確保したい人数、リーダーとして入れたいレベルを設定します。定休日があれば曜日で指定します。シフトを作る期間は「今月 / 来月」ボタンで切り替えられます。</p>
+        </li>
+        <li>
+          <strong>スタッフを登録する</strong>
+          <p>「スタッフ」タブで 1 人ずつ登録します。できる役割、レベル(1〜5)、<strong>この期間の出勤日数</strong>、勤務できる曜日、対応できる時間帯、希望休を入れます。出勤日数はここで決めた日数が上限になります。</p>
+        </li>
+        <li>
+          <strong>シフトを作る</strong>
+          <p>「シフト生成」タブで「シフトを生成」を押すと、日付 × 時間帯の表ができます。翌月分を作るときは、「店舗設定」タブの<strong>「来月」ボタン</strong>を押してから、もう一度生成するだけです。</p>
+        </li>
+      </ol>
+    </section>
+
+    <section class="panel">
+      <h2 class="guide-warn">大事なこと — データの保存について</h2>
+      <p>
+        入力した内容は<strong>この端末のこのブラウザの中だけ</strong>に保存されます。インターネット上には送信していません。
+        そのため、次の点にご注意ください。
+      </p>
+      <ul>
+        <li><strong>いつも同じ端末・同じブラウザで開いてください。</strong>別のパソコンやスマホで開くと、登録した内容は入っていません</li>
+        <li><strong>ブラウザの「閲覧履歴の削除」でデータが消えることがあります。</strong>週に 1 回ほど、「データ」タブの「JSON を書き出す」でバックアップを取ってください</li>
+        <li>書き出したファイルは「JSON を読み込む」で元に戻せます。端末を替えるときもこの方法で移せます</li>
+      </ul>
+      <p class="help">※ 1 週間以上バックアップしていないと、画面の上に確認メッセージが出ます。</p>
+    </section>
+
+    <section class="panel">
+      <h2>結果の見方</h2>
+      <ul>
+        <li><strong>不足 ○人</strong> — その時間帯の必要人数に届かなかった枠です。理由(出勤日数の上限に到達・希望休・連勤上限 など)も表示されます</li>
+        <li><strong>リーダー不在</strong> — 指定したレベル以上のスタッフを入れられなかった枠です</li>
+        <li><strong>出勤日数が目標に届かない</strong> — 設定した出勤日数まで入れられなかったスタッフです</li>
+      </ul>
+      <p>
+        不足が多いときは、必要人数が実際の要員数に対して多すぎるか、出勤日数の設定が足りていない可能性があります。
+        「スタッフ別の集計」で、目標と実績の差を確認してみてください。
+      </p>
+    </section>
+
+    <section class="panel">
+      <h2>試用期間中にお願いしたいこと</h2>
+      <p>使ってみたご感想を教えていただけると、改良に反映できます。特に次の点が知りたいです。</p>
+      <ul>
+        <li>手で組んだシフトと比べて、<strong>そのまま使える出来</strong>だったか。直しが必要ならどこか</li>
+        <li>シフト作成にかかっていた時間が、どれくらい変わったか</li>
+        <li>登録が面倒だった項目、逆に足りなかった項目</li>
+        <li>実際の運用で困った点(急な欠勤の差し替え、希望休の集め方 など)</li>
+      </ul>
+      <p id="guide-contact" class="help"></p>
+    </section>
+
+    <section class="panel">
+      <h2>費用について</h2>
+      <p>
+        試用期間中の費用はいただきません。期間終了後、引き続きお使いになりたいかどうかをご相談させてください。
+        試用期間が終わってもツールが自動で使えなくなることはありません。
+      </p>
+    </section>
+
+  </main>
+
+  <footer class="app-footer">
+    データはこの端末のブラウザ内にのみ保存されます(外部送信なし)。
+  </footer>
+
+  <script src="trial.js"></script>
+  <script>
+    (function () {
+      'use strict';
+      var trial = window.ShiftTrial;
+      if (!trial) return;
+      var st = trial.status(trial.CONFIG);
+      var box = document.getElementById('trial-banner');
+      if (st.enabled) {
+        box.className = 'trial-banner trial-banner--' + st.phase;
+        box.textContent = (st.storeName ? st.storeName + ' — ' : '') + st.message;
+        box.hidden = false;
+      }
+      var contact = document.getElementById('guide-contact');
+      contact.textContent = st.contact
+        ? 'ご連絡先: ' + st.contact
+        : 'ご感想・ご質問は、別途お伝えしている担当者の連絡先までお願いします。';
+    })();
+  </script>
+</body>
+</html>
