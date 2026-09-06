@@ -497,27 +497,30 @@
 
   function sampleData() {
     const stores = [
-      { id: 's-shinjuku', name: '新宿西口店', address: '東京都新宿区西新宿1-1-3', lat: 35.6896, lng: 139.6995, requiredStaff: 2, minLevel: 1, leaderLevel: 4, openWeekdays: [0, 1, 2, 3, 4, 5, 6], memo: '旗艦店。1 名はリーダー' },
-      { id: 's-shibuya', name: '渋谷店', address: '東京都渋谷区道玄坂1-2-3', lat: 35.6580, lng: 139.7016, requiredStaff: 1, minLevel: 2, leaderLevel: 0, openWeekdays: [0, 1, 2, 3, 4, 5, 6], memo: '' },
-      { id: 's-yokohama', name: '横浜店', address: '神奈川県横浜市西区みなとみらい2-2-1', lat: 35.4571, lng: 139.6329, requiredStaff: 2, minLevel: 1, leaderLevel: 3, openWeekdays: [0, 1, 2, 3, 4, 5, 6], memo: '' },
-      { id: 's-omiya', name: '大宮店', address: '埼玉県さいたま市大宮区桜木町1-7-5', lat: 35.9064, lng: 139.6238, requiredStaff: 1, minLevel: 3, leaderLevel: 0, openWeekdays: [1, 2, 3, 4, 5], memo: '平日のみ営業' },
+      { id: 's-shinjuku', name: '新宿西口店', address: '東京都新宿区西新宿1-1-3', lat: 35.6896, lng: 139.6995, requiredStaff: 2, minLevel: 1, leaderLevel: 4, openWeekdays: [0, 1, 2, 3, 4, 5, 6], memo: '旗艦店。1 名は Lv4 以上' },
+      { id: 's-shibuya', name: '渋谷センター街店', address: '東京都渋谷区宇田川町25-1', lat: 35.6614, lng: 139.6982, requiredStaff: 2, minLevel: 2, leaderLevel: 0, openWeekdays: [0, 1, 2, 3, 4, 5, 6], memo: '新規契約が多いため Lv2 以上' },
+      { id: 's-yokohama', name: '横浜みなとみらい店', address: '神奈川県横浜市西区みなとみらい2-2-1', lat: 35.4571, lng: 139.6329, requiredStaff: 2, minLevel: 1, leaderLevel: 3, openWeekdays: [0, 1, 2, 3, 4, 5, 6], memo: '1 名は Lv3 以上' },
+      { id: 's-kawasaki', name: '川崎駅前店', address: '神奈川県川崎市川崎区駅前本町26-1', lat: 35.5308, lng: 139.6970, requiredStaff: 1, minLevel: 1, leaderLevel: 0, openWeekdays: [0, 1, 2, 3, 4, 5, 6], memo: '' },
+      { id: 's-omiya', name: '大宮店', address: '埼玉県さいたま市大宮区桜木町1-7-5', lat: 35.9064, lng: 139.6238, requiredStaff: 1, minLevel: 3, leaderLevel: 0, openWeekdays: [1, 2, 3, 4, 5], memo: '平日のみ営業。ひとり体制のため Lv3 以上' },
     ];
     const employees = [
-      { id: 'e1', name: '佐藤 一郎', address: '東京都新宿区北新宿3-1', lat: 35.7030, lng: 139.6930, level: 5, maxDaysPerWeek: 5, availableWeekdays: [1, 2, 3, 4, 5, 6], unavailableDates: [], ngStoreIds: [], preferredStoreIds: ['s-shinjuku'], memo: '店長代行' },
-      { id: 'e2', name: '鈴木 花子', address: '東京都渋谷区神宮前6-1', lat: 35.6690, lng: 139.7050, level: 4, maxDaysPerWeek: 5, availableWeekdays: [0, 1, 2, 3, 4, 5, 6], unavailableDates: [], ngStoreIds: ['s-omiya'], preferredStoreIds: ['s-shibuya'], memo: '' },
-      { id: 'e3', name: '高橋 健', address: '神奈川県横浜市神奈川区鶴屋町2-1', lat: 35.4680, lng: 139.6210, level: 4, maxDaysPerWeek: 5, availableWeekdays: [0, 1, 2, 3, 4, 5, 6], unavailableDates: [], ngStoreIds: ['s-omiya'], preferredStoreIds: ['s-yokohama'], memo: '' },
-      { id: 'e4', name: '田中 美咲', address: '埼玉県さいたま市浦和区高砂1-1', lat: 35.8617, lng: 139.6455, level: 3, maxDaysPerWeek: 5, availableWeekdays: [1, 2, 3, 4, 5], unavailableDates: [], ngStoreIds: ['s-yokohama'], preferredStoreIds: ['s-omiya'], memo: '土日は不可' },
-      { id: 'e5', name: '伊藤 翔', address: '東京都中野区中野4-1', lat: 35.7070, lng: 139.6650, level: 3, maxDaysPerWeek: 4, availableWeekdays: [0, 1, 2, 3, 4, 5, 6], unavailableDates: [], ngStoreIds: [], preferredStoreIds: [], memo: '' },
-      { id: 'e6', name: '渡辺 さくら', address: '東京都世田谷区三軒茶屋1-1', lat: 35.6430, lng: 139.6690, level: 2, maxDaysPerWeek: 3, availableWeekdays: [0, 3, 6], unavailableDates: [], ngStoreIds: ['s-yokohama'], preferredStoreIds: ['s-shibuya'], memo: '学生・週3まで' },
-      { id: 'e7', name: '山本 大輔', address: '神奈川県川崎市川崎区駅前本町1-1', lat: 35.5310, lng: 139.6970, level: 2, maxDaysPerWeek: 5, availableWeekdays: [0, 1, 2, 3, 4, 5, 6], unavailableDates: [], ngStoreIds: [], preferredStoreIds: [], memo: '' },
-      { id: 'e8', name: '中村 結衣', address: '東京都豊島区南池袋1-1', lat: 35.7280, lng: 139.7130, level: 1, maxDaysPerWeek: 4, availableWeekdays: [1, 2, 3, 4, 5, 6], unavailableDates: [], ngStoreIds: ['s-yokohama', 's-omiya'], preferredStoreIds: [], memo: '研修中' },
-      { id: 'e9', name: '小林 直人', address: '神奈川県横浜市港北区新横浜2-1', lat: 35.5070, lng: 139.6170, level: 3, maxDaysPerWeek: 5, availableWeekdays: [0, 1, 2, 3, 4, 5, 6], unavailableDates: [], ngStoreIds: [], preferredStoreIds: ['s-yokohama'], memo: '' },
-      { id: 'e10', name: '加藤 恵', address: '東京都杉並区荻窪5-1', lat: 35.7040, lng: 139.6200, level: 4, maxDaysPerWeek: 4, availableWeekdays: [0, 5, 6], unavailableDates: [], ngStoreIds: [], preferredStoreIds: [], memo: '金土日のみ' },
+      { id: 'e01', name: '佐藤 一郎', address: '東京都新宿区北新宿3-1-1', lat: 35.7030, lng: 139.6930, level: 5, maxDaysPerWeek: 5, availableWeekdays: [1, 2, 3, 4, 5, 6], unavailableDates: [], ngStoreIds: [], preferredStoreIds: ['s-shinjuku'], memo: '店長代行。日曜は不可' },
+      { id: 'e02', name: '鈴木 花子', address: '東京都渋谷区神宮前6-1-1', lat: 35.6690, lng: 139.7050, level: 4, maxDaysPerWeek: 5, availableWeekdays: [0, 1, 2, 3, 4, 5, 6], unavailableDates: [], ngStoreIds: ['s-omiya'], preferredStoreIds: ['s-shibuya'], memo: '' },
+      { id: 'e03', name: '高橋 健', address: '神奈川県横浜市神奈川区鶴屋町2-1', lat: 35.4680, lng: 139.6210, level: 4, maxDaysPerWeek: 5, availableWeekdays: [0, 1, 2, 3, 4, 5, 6], unavailableDates: [], ngStoreIds: ['s-omiya'], preferredStoreIds: ['s-yokohama'], memo: '' },
+      { id: 'e04', name: '田中 美咲', address: '埼玉県さいたま市浦和区高砂1-1-1', lat: 35.8617, lng: 139.6455, level: 3, maxDaysPerWeek: 5, availableWeekdays: [1, 2, 3, 4, 5], unavailableDates: [], ngStoreIds: ['s-yokohama', 's-kawasaki'], preferredStoreIds: ['s-omiya'], memo: '育児のため土日は不可' },
+      { id: 'e05', name: '伊藤 翔', address: '東京都中野区中野4-1-1', lat: 35.7070, lng: 139.6650, level: 3, maxDaysPerWeek: 5, availableWeekdays: [0, 1, 2, 3, 4, 5, 6], unavailableDates: [], ngStoreIds: [], preferredStoreIds: [], memo: '' },
+      { id: 'e06', name: '渡辺 さくら', address: '東京都世田谷区三軒茶屋1-1-1', lat: 35.6430, lng: 139.6690, level: 2, maxDaysPerWeek: 3, availableWeekdays: [0, 3, 6], unavailableDates: [], ngStoreIds: ['s-omiya'], preferredStoreIds: ['s-shibuya'], memo: '学生。水・土・日のみ、週3まで' },
+      { id: 'e07', name: '山本 大輔', address: '神奈川県川崎市川崎区砂子1-1-1', lat: 35.5310, lng: 139.6970, level: 2, maxDaysPerWeek: 5, availableWeekdays: [0, 1, 2, 3, 4, 5, 6], unavailableDates: [], ngStoreIds: [], preferredStoreIds: ['s-kawasaki'], memo: '' },
+      { id: 'e08', name: '中村 結衣', address: '東京都豊島区南池袋1-1-1', lat: 35.7280, lng: 139.7130, level: 1, maxDaysPerWeek: 5, availableWeekdays: [1, 2, 3, 4, 5, 6], unavailableDates: [], ngStoreIds: ['s-yokohama', 's-omiya'], preferredStoreIds: [], memo: '研修中。Lv2 以上の店舗には入れない' },
+      { id: 'e09', name: '小林 直人', address: '神奈川県横浜市港北区新横浜2-1-1', lat: 35.5070, lng: 139.6170, level: 3, maxDaysPerWeek: 5, availableWeekdays: [0, 1, 2, 3, 4, 5, 6], unavailableDates: [], ngStoreIds: [], preferredStoreIds: ['s-yokohama'], memo: '' },
+      { id: 'e10', name: '加藤 恵', address: '東京都杉並区荻窪5-1-1', lat: 35.7040, lng: 139.6200, level: 4, maxDaysPerWeek: 5, availableWeekdays: [0, 5, 6], unavailableDates: [], ngStoreIds: [], preferredStoreIds: [], memo: '本業あり。金・土・日のみ' },
+      { id: 'e11', name: '吉田 亮', address: '神奈川県川崎市中原区小杉町3-1-1', lat: 35.5760, lng: 139.6590, level: 2, maxDaysPerWeek: 5, availableWeekdays: [0, 1, 2, 3, 4, 5, 6], unavailableDates: [], ngStoreIds: ['s-omiya'], preferredStoreIds: [], memo: '' },
+      { id: 'e12', name: '松本 由紀', address: '神奈川県横浜市西区北幸1-1-1', lat: 35.4650, lng: 139.6200, level: 5, maxDaysPerWeek: 5, availableWeekdays: [0, 1, 2, 3, 4, 5, 6], unavailableDates: [], ngStoreIds: ['s-omiya'], preferredStoreIds: ['s-yokohama'], memo: 'ベテラン。横浜エリア中心' },
     ];
     // 希望休のサンプル(生成期間の初日+2日)
     const start = nextMonday();
-    employees[1].unavailableDates = [S.addDays(start, 2)];
-    employees[4].unavailableDates = [S.addDays(start, 4), S.addDays(start, 5)];
+    employees[1].unavailableDates = [S.addDays(start, 2)];          // 鈴木: 水曜に希望休
+    employees[4].unavailableDates = [S.addDays(start, 4), S.addDays(start, 5)]; // 伊藤: 金土に希望休
     return {
       employees,
       stores,

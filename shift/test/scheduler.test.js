@@ -191,3 +191,134 @@ test('候補の少ない土日を先に埋めるので、週上限を平日で�
   const e1Weekdays = r.employeeStats.e1.dates.map((x) => S.weekdayOf(x.date));
   assert.ok(e1Weekdays.includes(6) && e1Weekdays.includes(0));
 });
+
+test('修復パス: 週上限で埋まらなかった枠を、別日の肩代わりで埋める', () => {
+  // 素朴に 1 日ずつ埋めると、残った枠に「週上限を使い切った人」しか候補がいない状態になる。
+  // 修復パスはその人の別の日を他の人に肩代わりさせて枠を埋める。
+  const stores = [
+    { id: 's0', name: '店0', address: '東京都新宿区', requiredStaff: 1, minLevel: 1 },
+    { id: 's1', name: '店1', address: '東京都新宿区', requiredStaff: 1, minLevel: 3 },
+  ];
+  const employees = [
+    emp('e0', '社員0', { level: 4, maxDaysPerWeek: 3, availableWeekdays: [0, 2, 3, 4, 6] }),
+    emp('e1', '社員1', { level: 5, maxDaysPerWeek: 5, availableWeekdays: [1, 2, 3, 4, 5, 6] }),
+    emp('e2', '社員2', { level: 3, maxDaysPerWeek: 2, ngStoreIds: ['s1'] }),
+    emp('e3', '社員3', { level: 3, maxDaysPerWeek: 5, availableWeekdays: [0, 1, 5, 6] }),
+  ];
+  const args = { employees, stores, startDate: '2026-09-07', endDate: '2026-09-13' };
+  const filled = (r) => Object.values(r.storeStats).reduce((a, s) => a + s.filled, 0);
+  const required = (r) => Object.values(r.storeStats).reduce((a, s) => a + s.required, 0);
+
+  const without = S.generate(Object.assign({}, args, { options: { repair: false } }));
+  const with_ = S.generate(Object.assign({}, args, { options: { repair: true } }));
+
+  assert.equal(required(with_), 14);
+  assert.ok(filled(without) < 14, `修復なしでは埋まらない前提のケース: ${filled(without)}`);
+  assert.equal(filled(with_), 14, '修復パスで全枠が埋まる');
+  assert.equal(with_.warnings.filter((w) => w.level === 'error').length, 0);
+});
+
+test('修復パスを通してもハード制約は破らない', () => {
+  const stores = [
+    { id: 's1', name: '新宿店', address: '東京都新宿区', requiredStaff: 2, minLevel: 2, leaderLevel: 4 },
+    { id: 's2', name: '横浜店', address: '神奈川県横浜市西区', requiredStaff: 2, minLevel: 1 },
+    { id: 's3', name: '大宮店', address: '埼玉県さいたま市大宮区', requiredStaff: 1, minLevel: 3, openWeekdays: [1, 2, 3, 4, 5] },
+  ];
+  const employees = [
+    emp('e1', 'A', { level: 5, maxDaysPerWeek: 5, availableWeekdays: [1, 2, 3, 4, 5, 6] }),
+    emp('e2', 'B', { level: 4, ngStoreIds: ['s3'] }),
+    emp('e3', 'C', { level: 3, address: '神奈川県横浜市西区', unavailableDates: ['2026-09-09'] }),
+    emp('e4', 'D', { level: 2, availableWeekdays: [1, 2, 3, 4, 5] }),
+    emp('e5', 'E', { level: 1, address: '神奈川県横浜市西区', ngStoreIds: ['s1'] }),
+    emp('e6', 'F', { level: 3, maxDaysPerWeek: 4 }),
+    emp('e7', 'G', { level: 2, availableWeekdays: [0, 6] }),
+  ];
+  const r = S.generate({ employees, stores, startDate: '2026-09-07', endDate: '2026-09-20', options: { maxConsecutiveDays: 4 } });
+  const byId = Object.fromEntries(employees.map((e) => [e.id, S.normalizeEmployee(e, S.DEFAULT_OPTIONS)]));
+  const storeById = Object.fromEntries(stores.map((s) => [s.id, S.normalizeStore(s)]));
+
+  r.days.forEach((d) => {
+    const seen = new Set();
+    d.stores.forEach((slot) => {
+      const st = storeById[slot.storeId];
+      assert.ok(slot.assigned.length <= st.requiredStaff, `${d.date} ${st.name}: 必要人数を超えている`);
+      slot.assigned.forEach((a) => {
+        const e = byId[a.employeeId];
+        assert.ok(!seen.has(e.id), `${d.date}: ${e.name} が同じ日に 2 店舗`);
+        seen.add(e.id);
+        assert.ok(!e.ngStoreIds.includes(st.id), `${d.date}: ${e.name} が NG店舗 ${st.name}`);
+        assert.ok(e.level >= st.minLevel, `${d.date}: ${e.name} がレベル不足`);
+        assert.ok(e.availableWeekdays.includes(d.weekday), `${d.date}: ${e.name} が勤務不可の曜日`);
+        assert.ok(!e.unavailableDates.includes(d.date), `${d.date}: ${e.name} が希望休`);
+      });
+    });
+  });
+
+  Object.entries(r.employeeStats).forEach(([id, st]) => {
+    const e = byId[id];
+    const byWeek = {};
+    st.dates.forEach((x) => { byWeek[S.weekKey(x.date)] = (byWeek[S.weekKey(x.date)] || 0) + 1; });
+    Object.entries(byWeek).forEach(([wk, n]) => assert.ok(n <= e.maxDaysPerWeek, `${e.name}: 週 ${wk} が上限超過 (${n})`));
+    let streak = 0, prev = null;
+    st.dates.forEach((x) => {
+      streak = prev && S.addDays(prev, 1) === x.date ? streak + 1 : 1;
+      prev = x.date;
+      assert.ok(streak <= 4, `${e.name}: 連勤上限超過`);
+    });
+    // 合計距離が明細と一致する
+    const km = st.dates.reduce((a, x) => a + S.estimateDistance(e, storeById[x.storeId]).km, 0);
+    assert.ok(Math.abs(km - st.km) < 0.15, `${e.name}: 距離の集計が明細と合わない ${st.km} vs ${km}`);
+    assert.equal(st.days, st.dates.length);
+  });
+});
+
+test('ランダムな条件でもハード制約を破らず、修復パスは充足を減らさない', () => {
+  let seed = 12345;
+  const rnd = (n) => { seed = (seed * 1103515245 + 12345) & 0x7fffffff; return seed % n; };
+  for (let t = 0; t < 60; t++) {
+    const stores = [];
+    for (let i = 0; i < 2 + rnd(3); i++) {
+      stores.push({
+        id: 's' + i, name: '店' + i, address: '東京都新宿区',
+        requiredStaff: 1 + rnd(3), minLevel: 1 + rnd(3), leaderLevel: rnd(2) ? 0 : 3 + rnd(2),
+        openWeekdays: [0, 1, 2, 3, 4, 5, 6].filter(() => rnd(4) > 0),
+      });
+    }
+    const employees = [];
+    for (let i = 0; i < 3 + rnd(8); i++) {
+      const wd = [0, 1, 2, 3, 4, 5, 6].filter(() => rnd(4) > 0);
+      employees.push({
+        id: 'e' + i, name: '社員' + i, address: '東京都新宿区', level: 1 + rnd(5),
+        maxDaysPerWeek: 2 + rnd(4), availableWeekdays: wd.length ? wd : [1, 2, 3],
+        unavailableDates: [], ngStoreIds: stores.filter(() => rnd(5) === 0).map((s) => s.id), preferredStoreIds: [],
+      });
+    }
+    const args = { employees, stores, startDate: '2026-09-07', endDate: '2026-09-20' };
+    const r = S.generate(args);
+    const plain = S.generate(Object.assign({}, args, { options: { repair: false } }));
+    const sum = (x) => Object.values(x.storeStats).reduce((a, s) => a + s.filled, 0);
+    assert.ok(sum(r) >= sum(plain), `t=${t}: 修復パスで充足が減った`);
+
+    const byId = Object.fromEntries(employees.map((e) => [e.id, S.normalizeEmployee(e, S.DEFAULT_OPTIONS)]));
+    const storeById = Object.fromEntries(stores.map((s) => [s.id, S.normalizeStore(s)]));
+    r.days.forEach((d) => {
+      const seen = new Set();
+      d.stores.forEach((slot) => {
+        const st = storeById[slot.storeId];
+        assert.ok(slot.assigned.length <= st.requiredStaff, `t=${t} ${d.date}: 必要人数超過`);
+        slot.assigned.forEach((a) => {
+          const e = byId[a.employeeId];
+          assert.ok(!seen.has(e.id), `t=${t} ${d.date}: 同じ日に 2 店舗`);
+          seen.add(e.id);
+          assert.ok(!e.ngStoreIds.includes(st.id) && e.level >= st.minLevel && e.availableWeekdays.includes(d.weekday));
+        });
+      });
+    });
+    Object.entries(r.employeeStats).forEach(([id, st]) => {
+      const e = byId[id];
+      const byWeek = {};
+      st.dates.forEach((x) => { byWeek[S.weekKey(x.date)] = (byWeek[S.weekKey(x.date)] || 0) + 1; });
+      Object.values(byWeek).forEach((n) => assert.ok(n <= e.maxDaysPerWeek, `t=${t}: ${e.name} 週上限超過`));
+    });
+  }
+});
