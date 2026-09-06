@@ -206,3 +206,6 @@ tbody tr:nth-child(even) { background: #fafbfc; }
 
 .duty-mark { color: var(--ok-ink); font-weight: 600; background: var(--ok-bg); border-radius: 3px; padding: 0 0.2rem; }
 .short-time { color: var(--warn-ink); font-weight: 600; }
+
+.check-inline--field { align-items: flex-start; gap: 0.4rem; font-size: 0.95rem; }
+.check-inline--field small { display: block; }

@@ -370,6 +370,7 @@
     $$('#staff-weekdays input, #staff-slots input, #staff-roles input').forEach(function (i) { i.checked = true; });
     form.elements.canOpen.checked = true;
     form.elements.canClose.checked = true;
+    form.elements.fixedStart.checked = false;
     syncDayCountFields();
     $('#staff-form-title').textContent = 'スタッフを追加';
     $('#btn-staff-submit').textContent = '追加';
@@ -385,6 +386,7 @@
     form.elements.dayCountMode.value = person.dayCountMode || '';
     form.elements.holidayDays.value = person.holidayDays === undefined ? 9 : person.holidayDays;
     form.elements.startLimit.value = person.startLimit || '';
+    form.elements.fixedStart.checked = !!person.fixedStart;
     form.elements.endLimit.value = person.endLimit || '';
     form.elements.canOpen.checked = person.canOpen !== false;
     form.elements.canClose.checked = person.canClose !== false;
@@ -438,6 +440,7 @@
       dayCountMode: form.elements.dayCountMode.value,
       holidayDays: Math.max(0, Number(form.elements.holidayDays.value) || 0),
       startLimit: form.elements.startLimit.value,
+      fixedStart: form.elements.fixedStart.checked,
       endLimit: form.elements.endLimit.value,
       canOpen: form.elements.canOpen.checked,
       canClose: form.elements.canClose.checked,
@@ -465,7 +468,7 @@
 
   function hoursText(p) {
     if (!p.startLimit && !p.endLimit) return '—';
-    return (p.startLimit || '') + '〜' + (p.endLimit || '');
+    return (p.startLimit || '') + '〜' + (p.endLimit || '') + (p.fixedStart && p.startLimit ? '(固定)' : '');
   }
 
   function renderStaffTable() {
@@ -954,7 +957,9 @@
           return el('td', { class: 'num', text: row.roles.indexOf(r.id) >= 0 ? '○' : '—' });
         }),
         [
-          el('td', { text: (row.startLimit || row.endLimit) ? (row.startLimit || '') + '〜' + (row.endLimit || '') : '—' }),
+          el('td', { text: (row.startLimit || row.endLimit)
+            ? (row.startLimit || '') + '〜' + (row.endLimit || '') + (row.fixedStart && row.startLimit ? '(固定)' : '')
+            : '—' }),
           el('td', { class: 'num', text: row.canClose ? '○' : '—' }),
           el('td', { text: row.dayCountMode === 'holiday' ? '公休' : '出勤' }),
           el('td', { class: 'num', text: row.targetDays }),

@@ -269,3 +269,120 @@ test('CSV に勤務時間と締め・時短の備考が出る', () => {
   const head = csv2.split('\n')[0];
   ['勤務時間', '締め作業', '基準', '公休'].forEach((h) => assert.ok(head.indexOf(h) >= 0, h + ' が無い'));
 });
+
+// ---------------- 出勤時刻の固定(時短スタッフ) ----------------
+
+function makeTwoSlotStore(over) {
+  return Object.assign({
+    name: 'テスト店',
+    periodStart: '2026-10-01',
+    periodEnd: '2026-10-07',
+    closedWeekdays: [],
+    closedDates: [],
+    roles: ROLES,
+    slots: [
+      { id: 'c', name: 'C(早番)', start: '09:30', end: '18:30', required: 2, requiredByRole: {}, leaderLevel: 0, requiresOpen: true },
+      { id: 'b', name: 'B(遅番)', start: '10:30', end: '19:30', required: 2, requiredByRole: {}, leaderLevel: 0, requiresClose: true },
+    ],
+  }, over || {});
+}
+
+test('出勤時刻を固定すると、その時刻に始まる枠にしか入らない', () => {
+  const staff = [
+    makeStaff({ id: 'short', name: '時短', startLimit: '09:30', fixedStart: true, endLimit: '16:00', canClose: false }),
+    makeStaff({ id: 'a', name: 'A' }),
+    makeStaff({ id: 'b', name: 'B' }),
+    makeStaff({ id: 'c', name: 'C' }),
+  ];
+  const r = run(makeTwoSlotStore(), staff);
+  eachCell(r, (cell, day) => {
+    const short = cell.assigned.find((a) => a.id === 'short');
+    if (!short) return;
+    assert.strictEqual(cell.slot.id, 'c', day.date + ': 時短が B(遅番) に入っている');
+    assert.strictEqual(short.start, '09:30');
+    assert.strictEqual(short.end, '16:00');
+  });
+  const row = r.staffSummary.find((x) => x.id === 'short');
+  assert.ok(row.assignedDays > 0, '時短が1日も入っていない');
+  assert.strictEqual(row.bySlot.b, undefined, 'B(遅番) に入っている');
+});
+
+test('固定していなければ、時短でも遅番に入れる(締めは別の人が担当)', () => {
+  // 遅番だけの店舗にすると、固定していない時短は遅番に入る
+  const store = makeTwoSlotStore({
+    slots: [{ id: 'b', name: 'B(遅番)', start: '10:30', end: '19:30', required: 2, requiredByRole: {}, leaderLevel: 0, requiresClose: true }],
+  });
+  const staff = [
+    makeStaff({ id: 'short', name: '時短', endLimit: '16:00', canClose: false }),
+    makeStaff({ id: 'closer', name: '締め可' }),
+  ];
+  const r = run(store, staff);
+  const row = r.staffSummary.find((x) => x.id === 'short');
+  assert.strictEqual(row.bySlot.b, 7, '固定していないのに遅番へ入らない');
+  eachCell(r, (cell) => {
+    const short = cell.assigned.find((a) => a.id === 'short');
+    assert.strictEqual(short.start, '10:30');
+    assert.strictEqual(short.end, '16:00');
+    assert.ok(cell.assigned.some((a) => a.canClose && a.coversClose));
+  });
+});
+
+test('固定していると、その時刻に始まらない枠には入れない', () => {
+  const store = makeTwoSlotStore({
+    slots: [{ id: 'b', name: 'B(遅番)', start: '10:30', end: '19:30', required: 2, requiredByRole: {}, leaderLevel: 0, requiresClose: true }],
+  });
+  const staff = [
+    makeStaff({ id: 'short', name: '時短', startLimit: '09:30', fixedStart: true, endLimit: '16:00', canClose: false }),
+    makeStaff({ id: 'closer', name: '締め可' }),
+  ];
+  const r = run(store, staff);
+  assert.strictEqual(r.staffSummary.find((x) => x.id === 'short').assignedDays, 0);
+  assert.ok(r.warnings.some((w) => w.type === 'setup' && /出勤時刻を 09:30 で固定/.test(w.message)));
+});
+
+test('固定した時刻に始まる枠がなければ設定の警告を出す', () => {
+  const staff = [
+    makeStaff({ id: 'short', name: '時短', startLimit: '10:00', fixedStart: true, endLimit: '16:00' }),
+    makeStaff({ id: 'a', name: 'A' }),
+  ];
+  const r = run(makeTwoSlotStore(), staff);
+  assert.ok(r.warnings.some((w) => w.type === 'setup' && /出勤時刻を 10:00 で固定/.test(w.message)), '警告が出ていない');
+  assert.strictEqual(r.staffSummary.find((x) => x.id === 'short').assignedDays, 0);
+});
+
+test('時刻を空欄のまま固定にしても影響しない', () => {
+  const staff = [
+    makeStaff({ id: 'a', name: 'A', fixedStart: true }),
+    makeStaff({ id: 'b', name: 'B' }),
+  ];
+  const r = run(makeTwoSlotStore(), staff);
+  assert.ok(r.staffSummary.find((x) => x.id === 'a').assignedDays > 0);
+  assert.ok(!r.warnings.some((w) => w.type === 'setup' && /固定/.test(w.message)));
+});
+
+test('時短が早番に固定されても、遅番の締め作業は担保される', () => {
+  const staff = [
+    makeStaff({ id: 's1', name: '時短1', startLimit: '09:30', fixedStart: true, endLimit: '16:00', canClose: false }),
+    makeStaff({ id: 's2', name: '時短2', startLimit: '09:30', fixedStart: true, endLimit: '16:00', canClose: false }),
+    makeStaff({ id: 'f1', name: 'フル1' }),
+    makeStaff({ id: 'f2', name: 'フル2' }),
+    makeStaff({ id: 'f3', name: 'フル3' }),
+  ];
+  const r = run(makeTwoSlotStore(), staff);
+  eachCell(r, (cell, day) => {
+    if (!cell.slot.requiresClose) return;
+    assert.ok(cell.assigned.some((a) => a.canClose && a.coversClose), day.date + ' に締め担当がいない');
+    assert.ok(!cell.assigned.some((a) => a.id.slice(0, 1) === 's'), day.date + ' の遅番に時短が入っている');
+  });
+});
+
+test('au ショップのサンプルでは時短スタッフが早番のみに入る', () => {
+  const d = S.sampleData('aushop', '2026-10-05');
+  const r = S.generate({ store: d.store, staff: d.staff });
+  const short = r.staffSummary.find((x) => x.fixedStart);
+  assert.ok(short, '固定設定のサンプルがない');
+  assert.strictEqual(short.startLimit, '09:30');
+  assert.ok(short.assignedDays > 0);
+  const lateSlot = r.slots.find((x) => x.requiresClose);
+  assert.strictEqual(short.bySlot[lateSlot.id], undefined, '時短が締めのある枠に入っている');
+});

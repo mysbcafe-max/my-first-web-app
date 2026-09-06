@@ -165,6 +165,11 @@
   function effectiveSpan(staff, slot) {
     const span = slotSpan(slot);
     if (!span) return { start: null, end: null, coversOpen: true, coversClose: true, shortened: false };
+    // 出勤時刻を固定している人(時短など)は、その時刻に始まる枠にしか入れない
+    if (staff.fixedStart && isValidTime(staff.startLimit)) {
+      const fixed = toMinutes(staff.startLimit);
+      if (fixed !== span.start && fixed + 1440 !== span.start) return null;
+    }
     const own = staffSpan(staff, span);
     const start = Math.max(span.start, own.start);
     const end = Math.min(span.end, own.end);
@@ -294,6 +299,8 @@
         // 時短勤務: 出勤できる最早時刻・退勤する最遅時刻(空なら枠の時間どおり)
         startLimit: isValidTime(s.startLimit) ? String(s.startLimit) : '',
         endLimit: isValidTime(s.endLimit) ? String(s.endLimit) : '',
+        // 出勤時刻を固定する(その時刻に始まる枠にだけ入れる)
+        fixedStart: !!s.fixedStart,
         canOpen: s.canOpen === undefined ? true : !!s.canOpen,    // 開店準備ができる
         canClose: s.canClose === undefined ? true : !!s.canClose, // 締め作業ができる
         // 日数の基準: '' なら店舗の既定、'work' なら出勤日数、'holiday' なら公休日数
@@ -402,6 +409,16 @@
       }
       if (!s.availableSlots.length) {
         setupWarnings.push({ type: 'setup', message: s.name + ' は対応できる時間帯が 1 つも選ばれていません。' });
+      }
+      if (s.fixedStart && isValidTime(s.startLimit)) {
+        const matched = slots.filter((slot) => s.availableSlots.indexOf(slot.id) >= 0
+          && toMinutes(slot.start) === toMinutes(s.startLimit));
+        if (!matched.length) {
+          setupWarnings.push({
+            type: 'setup',
+            message: s.name + ' は出勤時刻を ' + s.startLimit + ' で固定していますが、その時刻に始まる時間帯がありません。',
+          });
+        }
       }
       if (s.targetDays === 0) {
         setupWarnings.push({
@@ -856,6 +873,7 @@
         restDays: allDates.length - st.assigned,   // 実際の休みの日数
         startLimit: s.startLimit,
         endLimit: s.endLimit,
+        fixedStart: s.fixedStart,
         canOpen: s.canOpen,
         canClose: s.canClose,
         diff: s.targetDays - st.assigned === 0 ? 0 : st.assigned - s.targetDays,
@@ -941,7 +959,8 @@
     const rows = [header];
     result.staffSummary.forEach((row) => {
       const hours = (row.startLimit || row.endLimit)
-        ? (row.startLimit || '') + '〜' + (row.endLimit || '') : '';
+        ? (row.startLimit || '') + '〜' + (row.endLimit || '') + (row.fixedStart && row.startLimit ? '(固定)' : '')
+        : '';
       rows.push([row.name, row.level]
         .concat(
           roles.map((r) => (row.roles.indexOf(r.id) >= 0 ? '可' : '不可')),
@@ -1005,7 +1024,8 @@
       ['高橋 (カウンター)', 4, [0, 1, 2], 20, null, null, { dayCountMode: 'holiday', holidayDays: 10 }],
       ['田中 (カウンター)', 3, [0, 1], 20, null, null, { dayCountMode: 'holiday', holidayDays: 10 }],
       ['伊藤 (カウンター)', 3, [1], 18, null, [1]],
-      ['木村 (時短・カウンター)', 3, [0, 1], 18, null, null, { endLimit: '16:00', canClose: false }],
+      ['木村 (時短・カウンター)', 3, [0, 1], 18, null, null,
+        { startLimit: '09:30', fixedStart: true, endLimit: '16:00', canClose: false }],
       ['渡辺 (フロア)', 2, [0], 18],
       ['山本 (フロア)', 2, [0, 2], 16],
       ['中村 (事務)', 3, [0, 2], 14, [1, 2, 3, 4, 5], [0]],
@@ -1072,6 +1092,7 @@
       maxConsecutiveDays: 0,
       startLimit: '',
       endLimit: '',
+      fixedStart: false,
       canOpen: true,
       canClose: true,
       dayCountMode: '',

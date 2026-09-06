@@ -78,6 +78,7 @@
         できる役割(店舗設定で決めた担当)、レベル、この期間の勤務日数を登録します。
         時短勤務の人は「退勤する最遅時刻」を入れてください。締め作業まで残れない人として扱い、
         その枠には別途、締め作業ができる人が入るようにします。
+        出勤時刻が決まっている人は「この時刻で固定する」にチェックを入れると、その時刻に始まる時間帯にだけ入ります。
       </p>
 
       <form id="form-staff" class="form-card">
@@ -103,7 +104,8 @@
           </label>
           <label id="field-target-days"><span>出勤日数(この期間) <span class="req">*</span></span> <input type="number" name="targetDays" min="0" max="31" step="1" value="20"> <small>この日数を上限に、できるだけこの日数入れます</small></label>
           <label id="field-holiday-days" hidden><span>公休日数(この期間) <span class="req">*</span></span> <input type="number" name="holidayDays" min="0" max="31" step="1" value="9"> <small id="holiday-hint">期間の全日数から引いた日数が出勤日数になります</small></label>
-          <label>出勤できる最早時刻 <input type="time" name="startLimit"> <small>空欄なら枠の開始時刻から</small></label>
+          <label>出勤時刻 <input type="time" name="startLimit"> <small>空欄なら枠の開始時刻から</small></label>
+          <label class="check-inline check-inline--field"><input type="checkbox" name="fixedStart"> この時刻で固定する <small>その時刻に始まる時間帯にだけ入れます</small></label>
           <label>退勤する最遅時刻 <input type="time" name="endLimit"> <small>時短勤務の人はここに終業時刻を入れます</small></label>
           <fieldset>
             <legend>開店準備・締め作業</legend>
