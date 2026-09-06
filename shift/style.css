@@ -132,6 +132,10 @@ td.actions { white-space: nowrap; }
 .card { border: 1px solid var(--line); border-radius: var(--radius); padding: 1rem; }
 .card p { color: var(--muted); font-size: 0.9rem; }
 .card--danger { border-color: #fecaca; }
+.card--wide { grid-column: 1 / -1; }
+.level-names { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 0.5rem 1rem; }
+.level-names label { display: flex; align-items: center; gap: 0.5rem; font-size: 0.9rem; color: var(--muted); }
+.level-names label .level { flex: none; }
 
 @media (max-width: 600px) {
   body { font-size: 14px; }

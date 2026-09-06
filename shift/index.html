@@ -75,13 +75,7 @@
         <div class="form-grid">
           <label><span>名前 <span class="req">*</span></span> <input type="text" name="name" required placeholder="山田 太郎"></label>
           <label>レベル
-            <select name="level">
-              <option value="1">1(研修中)</option>
-              <option value="2">2(一般)</option>
-              <option value="3" selected>3(中堅)</option>
-              <option value="4">4(リーダー)</option>
-              <option value="5">5(店長代行)</option>
-            </select>
+            <select name="level" data-level-options="employee"></select>
           </label>
           <label class="form-grid__full">住所 <input type="text" name="address" placeholder="東京都新宿区西新宿2-8-1"> <small>都道府県・市区町村から店舗との距離を推定します</small></label>
           <label>緯度(任意) <input type="number" name="lat" step="any" placeholder="35.6896"></label>
@@ -125,22 +119,10 @@
           <label>緯度(任意) <input type="number" name="lat" step="any"></label>
           <label>経度(任意) <input type="number" name="lng" step="any"></label>
           <label>必要レベル(これ未満は配置しない)
-            <select name="minLevel">
-              <option value="1" selected>1 以上</option>
-              <option value="2">2 以上</option>
-              <option value="3">3 以上</option>
-              <option value="4">4 以上</option>
-              <option value="5">5 以上</option>
-            </select>
+            <select name="minLevel" data-level-options="min"></select>
           </label>
           <label>リーダー要件(1 名はこのレベル以上)
-            <select name="leaderLevel">
-              <option value="0" selected>不要</option>
-              <option value="2">2 以上</option>
-              <option value="3">3 以上</option>
-              <option value="4">4 以上</option>
-              <option value="5">5 以上</option>
-            </select>
+            <select name="leaderLevel" data-level-options="leader"></select>
           </label>
           <fieldset class="form-grid__full">
             <legend>営業日</legend>
@@ -161,6 +143,18 @@
       <h2>データ</h2>
       <p class="help">データはこのブラウザの中(localStorage)にだけ保存されます。別の端末で使うときや控えを残すときは JSON で書き出してください。</p>
       <div class="card-list">
+        <div class="card card--wide">
+          <h3>レベルの呼び名(役職名)</h3>
+          <p>社内の呼び方に合わせて変更できます。レベルの番号(1〜5)と大小関係はそのままで、画面に出る名前だけが変わります。登録済みの社員・店舗のデータはそのまま使えます。</p>
+          <form id="form-levels">
+            <div class="level-names" id="level-names"></div>
+            <div class="form-actions">
+              <button type="submit" class="btn btn-primary">呼び名を保存</button>
+              <button type="button" class="btn" id="btn-levels-reset">既定に戻す</button>
+              <span class="status" id="levels-status"></span>
+            </div>
+          </form>
+        </div>
         <div class="card">
           <h3>書き出し</h3>
           <p>社員・店舗・設定を 1 つの JSON ファイルにまとめてダウンロードします。</p>

@@ -5,14 +5,30 @@
   const S = window.ShiftScheduler;
   const STORAGE_KEY = 'shift-scheduler-v1';
   const WD = S.WEEKDAY_LABELS;
+  const LEVELS = [1, 2, 3, 4, 5];
+  const DEFAULT_LEVEL_NAMES = ['研修中', '一般', '中堅', 'リーダー', '店長代行'];
 
   // ---------------- 状態 ----------------
 
   const defaultSettings = () => ({
     startDate: '',
     endDate: '',
+    levelNames: DEFAULT_LEVEL_NAMES.slice(),
     options: Object.assign({}, S.DEFAULT_OPTIONS),
   });
+
+  // レベル n の呼び名。未設定・空欄なら既定に戻す
+  function levelName(n) {
+    const names = (state.settings && state.settings.levelNames) || [];
+    const v = (names[n - 1] || '').trim();
+    return v || DEFAULT_LEVEL_NAMES[n - 1] || '';
+  }
+
+  // 「3(中堅)」のような表示
+  function levelLabel(n) {
+    const name = levelName(n);
+    return name ? `${n}(${name})` : String(n);
+  }
 
   let state = loadState();
 
@@ -107,8 +123,8 @@
     });
     $$('.panel').forEach((p) => { p.hidden = p.id !== 'tab-' + name; });
     try { localStorage.setItem(STORAGE_KEY + ':tab', name); } catch (e) { /* ignore */ }
-    if (name === 'employees') renderEmployeeForm();
-    if (name === 'stores') renderStoreForm();
+    if (name === 'employees') { renderLevelOptions(); renderEmployeeForm(); }
+    if (name === 'stores') { renderLevelOptions(); renderStoreForm(); }
   }
 
   $$('.tab').forEach((b) => b.addEventListener('click', () => showTab(b.dataset.tab)));
@@ -133,6 +149,23 @@
     container.innerHTML = state.stores.map((s) =>
       `<label><input type="checkbox" name="${name}" value="${esc(s.id)}" ${sel.includes(s.id) ? 'checked' : ''}>${esc(s.name)}</label>`
     ).join('');
+  }
+
+  // レベルを選ぶ <select> の中身を、現在の呼び名で作り直す
+  function renderLevelOptions() {
+    $$('[data-level-options]').forEach((sel) => {
+      const kind = sel.dataset.levelOptions;
+      const keep = sel.value;
+      let html = '';
+      if (kind === 'leader') html += '<option value="0">不要</option>';
+      LEVELS.forEach((n) => {
+        if (kind === 'leader' && n === 1) return; // Lv1 以上は制約にならない
+        const label = kind === 'employee' ? levelLabel(n) : `${levelLabel(n)} 以上`;
+        html += `<option value="${n}">${esc(label)}</option>`;
+      });
+      sel.innerHTML = html;
+      if (keep !== '') sel.value = keep;
+    });
   }
 
   function checkedValues(form, name) {
@@ -204,7 +237,7 @@
     const rows = state.employees.map((e) => `
       <tr>
         <td>${esc(e.name)}</td>
-        <td class="num"><span class="level">${esc(e.level)}</span></td>
+        <td class="num"><span class="level" title="${esc(levelName(e.level))}">${esc(e.level)}</span> <small>${esc(levelName(e.level))}</small></td>
         <td>${esc(e.address)}${e.lat != null && e.lng != null ? ' <small>(座標あり)</small>' : ''}</td>
         <td class="num">${esc(e.maxDaysPerWeek)}</td>
         <td>${esc(weekdayText(e.availableWeekdays))}</td>
@@ -299,8 +332,8 @@
         <td>${esc(s.name)}</td>
         <td>${esc(s.address)}${s.lat != null && s.lng != null ? ' <small>(座標あり)</small>' : ''}</td>
         <td class="num">${esc(s.requiredStaff)} 名</td>
-        <td class="num">${esc(s.minLevel)} 以上</td>
-        <td class="num">${s.leaderLevel ? esc(s.leaderLevel) + ' 以上' : '<small>—</small>'}</td>
+        <td class="num" title="${esc(levelName(s.minLevel))}">${esc(s.minLevel)} 以上</td>
+        <td class="num" title="${s.leaderLevel ? esc(levelName(s.leaderLevel)) : ''}">${s.leaderLevel ? esc(s.leaderLevel) + ' 以上' : '<small>—</small>'}</td>
         <td>${esc(weekdayText(s.openWeekdays))}</td>
         <td>${esc(s.memo)}</td>
         <td class="actions">
@@ -405,7 +438,7 @@
         const s = d.stores.find((x) => x.storeId === id);
         if (!s) return `<td class="closed ${cls}">定休</td>`;
         let inner = s.assigned.map((a) =>
-          `<span class="name">${esc(a.name)} <small title="${esc(S.methodLabel(a.method))}">Lv${esc(a.level)}・${esc(a.km)}km</small></span>`
+          `<span class="name">${esc(a.name)} <small title="${esc(levelName(a.level))}・${esc(S.methodLabel(a.method))}">Lv${esc(a.level)}・${esc(a.km)}km</small></span>`
         ).join('');
         if (s.shortage > 0) inner += `<span class="shortage">${s.shortage} 名不足</span>`;
         if (s.leaderMissing) inner += '<span class="leader-missing">リーダー不在</span>';
@@ -421,7 +454,7 @@
       if (!st) return '';
       const stores = Object.entries(st.storeCounts).map(([sid, n]) => `${esc(storeName(sid))} ×${n}`).join('、') || '<small>—</small>';
       const dates = st.dates.map((x) => `<span class="chip" title="${esc(storeName(x.storeId))}">${esc(x.date.slice(5).replace('-', '/'))}</span>`).join('');
-      return `<tr><td>${esc(e.name)}</td><td class="num"><span class="level">${esc(e.level)}</span></td><td class="num">${st.days} 日</td><td class="num">${st.km} km</td><td>${stores}</td><td>${dates || '<small>—</small>'}</td></tr>`;
+      return `<tr><td>${esc(e.name)}</td><td class="num"><span class="level" title="${esc(levelName(e.level))}">${esc(e.level)}</span></td><td class="num">${st.days} 日</td><td class="num">${st.km} km</td><td>${stores}</td><td>${dates || '<small>—</small>'}</td></tr>`;
     }).join('');
     $('#result-employees').innerHTML = `<thead><tr><th>社員</th><th>Lv</th><th>出勤日数</th><th>合計距離(片道)</th><th>店舗</th><th>出勤日</th></tr></thead><tbody>${empRows}</tbody>`;
 
@@ -445,6 +478,31 @@
   $('#btn-print').addEventListener('click', () => window.print());
 
   // ---------------- データ ----------------
+
+  const formLevels = $('#form-levels');
+
+  function renderLevelSettings() {
+    $('#level-names').innerHTML = LEVELS.map((n) =>
+      `<label><span class="level">${n}</span><input type="text" name="level${n}" maxlength="20" value="${esc(levelName(n))}" placeholder="${esc(DEFAULT_LEVEL_NAMES[n - 1])}"></label>`
+    ).join('');
+  }
+
+  formLevels.addEventListener('submit', (ev) => {
+    ev.preventDefault();
+    state.settings.levelNames = LEVELS.map((n) => formLevels['level' + n].value.trim());
+    saveState();
+    renderAll();
+    $('#levels-status').textContent = '保存しました';
+    setTimeout(() => { $('#levels-status').textContent = ''; }, 3000);
+  });
+
+  $('#btn-levels-reset').addEventListener('click', () => {
+    state.settings.levelNames = DEFAULT_LEVEL_NAMES.slice();
+    saveState();
+    renderAll();
+    $('#levels-status').textContent = '既定に戻しました';
+    setTimeout(() => { $('#levels-status').textContent = ''; }, 3000);
+  });
 
   $('#btn-export').addEventListener('click', () => {
     const data = { version: 1, exportedAt: new Date().toISOString(), employees: state.employees, stores: state.stores, settings: state.settings };
@@ -524,7 +582,7 @@
     return {
       employees,
       stores,
-      settings: { startDate: start, endDate: S.addDays(start, 6), options: Object.assign({}, S.DEFAULT_OPTIONS) },
+      settings: Object.assign(defaultSettings(), { startDate: start, endDate: S.addDays(start, 6) }),
       result: null,
     };
   }
@@ -532,6 +590,8 @@
   // ---------------- 初期化 ----------------
 
   function renderAll() {
+    renderLevelOptions();
+    renderLevelSettings();
     renderEmployees();
     renderStores();
     renderEmployeeForm();
