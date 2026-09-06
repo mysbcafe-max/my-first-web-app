@@ -186,6 +186,17 @@
             </div>
             <div class="chips" id="store-closed-dates"></div>
           </div>
+          <fieldset class="form-grid__full">
+            <legend>多めに配置する日</legend>
+            <label class="check-inline"><input type="checkbox" name="useHolidays" checked> 祝日も土日と同じ人数にする</label>
+            <p class="help" id="holiday-preview"></p>
+            <span class="field-label">そのほか多めにしたい日(セール日など)</span>
+            <div class="chip-input">
+              <input type="date" id="store-busy-date">
+              <button type="button" class="btn btn-small" id="btn-add-busy-date">追加</button>
+            </div>
+            <div class="chips" id="store-busy-dates"></div>
+          </fieldset>
         </div>
       </form>
 
@@ -246,6 +257,7 @@
   </footer>
 
   <script src="trial.js"></script>
+  <script src="holidays.js"></script>
   <script src="scheduler.js"></script>
   <script src="app.js"></script>
 </body>

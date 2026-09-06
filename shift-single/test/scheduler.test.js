@@ -384,7 +384,7 @@ test('CSV に日付別・スタッフ別の内容が出る', () => {
   const r = run(store, staff);
 
   const csv1 = S.toCsvByDate(r);
-  assert.ok(csv1.split('\n')[0].startsWith('日付,曜日,時間帯'));
+  assert.ok(csv1.split('\n')[0].startsWith('日付,曜日,祝日,時間帯'));
   assert.ok(csv1.indexOf('山田 太郎') >= 0);
   assert.ok(csv1.indexOf('定休日') >= 0);
   assert.ok(csv1.indexOf('(不足)') >= 0);
