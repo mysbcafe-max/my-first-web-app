@@ -29,9 +29,10 @@
     <section class="panel" id="tab-generate" role="tabpanel">
       <h2>シフト生成</h2>
       <p class="help">
-        「スタッフ」タブで登録した情報(できる役割・レベル・出勤日数・希望休など)と、
+        「スタッフ」タブで登録した情報(できる役割・レベル・勤務日数・勤務時間・希望休など)と、
         「店舗設定」タブの時間帯ごとの必要人数から、1 か月分のシフト表を作ります。
-        出勤日数は各スタッフに設定した日数を上限に、できるだけその日数に近づけます。
+        勤務日数は出勤日数でも公休日数でも指定でき、設定した日数に近づけます。
+        締め作業・開店準備がある枠には、その時間まで居られて担当できる人を必ず 1 人入れます。
       </p>
 
       <form id="form-generate" class="form-grid">
@@ -73,7 +74,11 @@
     <!-- ============ スタッフ ============ -->
     <section class="panel" id="tab-staff" role="tabpanel" hidden>
       <h2>スタッフ</h2>
-      <p class="help">できる役割(店舗設定で決めた担当)、レベル、この期間に入ってもらう出勤日数を登録します。</p>
+      <p class="help">
+        できる役割(店舗設定で決めた担当)、レベル、この期間の勤務日数を登録します。
+        時短勤務の人は「退勤する最遅時刻」を入れてください。締め作業まで残れない人として扱い、
+        その枠には別途、締め作業ができる人が入るようにします。
+      </p>
 
       <form id="form-staff" class="form-card">
         <input type="hidden" name="id">
@@ -89,7 +94,24 @@
               <option value="5">5(店長代行)</option>
             </select>
           </label>
-          <label><span>出勤日数(この期間) <span class="req">*</span></span> <input type="number" name="targetDays" min="0" max="31" step="1" value="20" required> <small>この日数を上限に、できるだけこの日数入れます</small></label>
+          <label>日数の基準
+            <select name="dayCountMode">
+              <option value="">店舗の既定にあわせる</option>
+              <option value="work">出勤日数で指定</option>
+              <option value="holiday">公休日数で指定</option>
+            </select>
+          </label>
+          <label id="field-target-days"><span>出勤日数(この期間) <span class="req">*</span></span> <input type="number" name="targetDays" min="0" max="31" step="1" value="20"> <small>この日数を上限に、できるだけこの日数入れます</small></label>
+          <label id="field-holiday-days" hidden><span>公休日数(この期間) <span class="req">*</span></span> <input type="number" name="holidayDays" min="0" max="31" step="1" value="9"> <small id="holiday-hint">期間の全日数から引いた日数が出勤日数になります</small></label>
+          <label>出勤できる最早時刻 <input type="time" name="startLimit"> <small>空欄なら枠の開始時刻から</small></label>
+          <label>退勤する最遅時刻 <input type="time" name="endLimit"> <small>時短勤務の人はここに終業時刻を入れます</small></label>
+          <fieldset>
+            <legend>開店準備・締め作業</legend>
+            <div class="check-row">
+              <label><input type="checkbox" name="canOpen" checked> 開店準備ができる</label>
+              <label><input type="checkbox" name="canClose" checked> 締め作業ができる</label>
+            </div>
+          </fieldset>
           <fieldset class="form-grid__full">
             <legend>できる役割(担当)</legend>
             <div class="check-row" id="staff-roles"></div>
@@ -143,6 +165,13 @@
             </div>
             <small>翌月のシフトを作るときは「来月」を押してから生成してください</small>
           </div>
+          <label>勤務日数の基準(既定)
+            <select name="dayCountMode">
+              <option value="work">出勤日数</option>
+              <option value="holiday">公休日数</option>
+            </select>
+            <small>スタッフごとに個別に変えられます</small>
+          </label>
           <fieldset class="form-grid__full">
             <legend>定休日(曜日)</legend>
             <div class="check-row" id="store-closed-weekdays"></div>
