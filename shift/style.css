@@ -118,6 +118,10 @@ td.actions { white-space: nowrap; }
 .matrix .name small { margin-left: 0.25em; }
 .matrix .shortage { display: block; color: var(--error-ink); font-weight: 600; }
 .matrix .leader-missing { display: block; color: var(--warn-ink); font-size: 0.8rem; }
+.matrix .avg { display: block; color: var(--muted); font-size: 0.78rem; margin-top: 0.15rem; }
+.matrix .avg--short { color: var(--error-ink); font-weight: 600; }
+.matrix .sub { font-style: normal; color: var(--warn-ink); margin-right: 0.1em; }
+.list td.bad { color: var(--error-ink); font-weight: 600; }
 .matrix th.store { position: sticky; left: 0; background: #f0f2f5; z-index: 1; }
 
 .alert { padding: 0.5rem 0.75rem; border-radius: 6px; margin: 0.35rem 0; font-size: 0.9rem; }
