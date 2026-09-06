@@ -23,3 +23,4 @@ jobs:
           node --check shift/scheduler.js
           node --check shift-single/app.js
           node --check shift-single/scheduler.js
+          node --check shift-single/trial.js

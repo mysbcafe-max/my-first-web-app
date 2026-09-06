@@ -9,7 +9,7 @@
 <body>
   <header class="app-header">
     <div class="app-header__inner">
-      <h1 class="app-title"><a href="../">Web事業部</a> / シフト生成(一店舗用)</h1>
+      <h1 class="app-title"><a href="../">Web事業部</a> / シフト生成(一店舗用) <a class="app-title__guide" href="guide.html">使い方</a></h1>
       <nav class="tabs" role="tablist" aria-label="画面切り替え">
         <button class="tab is-active" role="tab" data-tab="generate" aria-selected="true">シフト生成</button>
         <button class="tab" role="tab" data-tab="staff" aria-selected="false">スタッフ <span class="badge" id="count-staff">0</span></button>
@@ -20,6 +20,9 @@
   </header>
 
   <main class="app-main">
+
+    <div id="trial-banner" class="trial-banner" hidden></div>
+    <div id="backup-notice" class="notice notice-warn backup-notice" hidden></div>
 
     <!-- ============ シフト生成 ============ -->
     <section class="panel" id="tab-generate" role="tabpanel">
@@ -192,6 +195,7 @@
         <input type="file" id="import-file" accept="application/json,.json" hidden>
         <button type="button" class="btn btn-danger" id="btn-clear">すべて消す</button>
       </div>
+      <p class="status" id="backup-status"></p>
       <p class="status" id="data-status"></p>
     </section>
 
@@ -201,6 +205,7 @@
     データはブラウザ内にのみ保存されます(外部送信なし・費用ゼロ)。
   </footer>
 
+  <script src="trial.js"></script>
   <script src="scheduler.js"></script>
   <script src="app.js"></script>
 </body>

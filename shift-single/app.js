@@ -9,6 +9,8 @@
   const S = window.SingleShiftScheduler;
   const STORAGE_KEY = 'shift-single/v2';
   const LEGACY_KEY = 'shift-single/v1';
+  const BACKUP_KEY = 'shift-single/last-backup';
+  const BACKUP_REMIND_DAYS = 7;
   const WEEKDAYS = S.WEEKDAY_LABELS;
 
   // ---------------- 小物 ----------------
@@ -143,6 +145,7 @@
   let data = loadData();
   let lastResult = null;
   let editingDaysOff = [];
+  let backupNoticeDismissed = false;
 
   // ---------------- 共通表示 ----------------
 
@@ -168,6 +171,87 @@
     if (!list || list.length === 7) return '毎日';
     if (!list.length) return 'なし';
     return list.slice().sort(function (a, b) { return a - b; }).map(function (i) { return WEEKDAYS[i]; }).join('');
+  }
+
+  // ---------------- 試用の案内・バックアップの督促 ----------------
+
+  function renderTrialBanner() {
+    const box = $('#trial-banner');
+    const trial = window.ShiftTrial;
+    if (!trial) { box.hidden = true; return; }
+    const st = trial.status(trial.CONFIG, localDate(new Date()));
+    if (!st.enabled) { box.hidden = true; return; }
+
+    box.textContent = '';
+    box.className = 'trial-banner trial-banner--' + st.phase;
+    box.appendChild(el('strong', { text: st.storeName ? st.storeName + ' — 試用版' : '試用版' }));
+    box.appendChild(el('span', { text: ' ' + st.message }));
+    if (st.contact) {
+      box.appendChild(el('span', { class: 'trial-banner__contact', text: 'ご相談: ' + st.contact }));
+    }
+    box.hidden = false;
+  }
+
+  function lastBackupAt() {
+    try {
+      const v = localStorage.getItem(BACKUP_KEY);
+      return v && /^\d{4}-\d{2}-\d{2}$/.test(v) ? v : '';
+    } catch (e) {
+      return '';
+    }
+  }
+
+  function markBackedUp() {
+    try {
+      localStorage.setItem(BACKUP_KEY, localDate(new Date()));
+    } catch (e) { /* 保存できなくても動作に影響はない */ }
+    renderBackupNotice();
+  }
+
+  function daysSince(dateStr) {
+    const a = new Date(dateStr + 'T00:00:00Z').getTime();
+    const b = new Date(localDate(new Date()) + 'T00:00:00Z').getTime();
+    return Math.round((b - a) / 86400000);
+  }
+
+  // データはこの端末のブラウザにしか無いので、書き出しをうながす
+  function renderBackupNotice() {
+    const notice = $('#backup-notice');
+    const status = $('#backup-status');
+    const last = lastBackupAt();
+    const hasData = data.staff.length > 0;
+
+    if (status) {
+      status.textContent = last
+        ? '最終バックアップ: ' + last.replace(/-/g, '/') + '(' + daysSince(last) + '日前)'
+        : 'まだバックアップしていません。「JSON を書き出す」で保存できます。';
+    }
+
+    if (!hasData || backupNoticeDismissed) { notice.hidden = true; return; }
+    const overdue = !last || daysSince(last) >= BACKUP_REMIND_DAYS;
+    if (!overdue) { notice.hidden = true; return; }
+
+    notice.textContent = '';
+    notice.appendChild(el('span', {
+      text: last
+        ? 'バックアップから ' + daysSince(last) + ' 日たっています。データはこの端末のブラウザにだけ保存されています。'
+        : 'データはこの端末のブラウザにだけ保存されています。念のためバックアップを取ってください。',
+    }));
+    notice.appendChild(el('button', {
+      type: 'button', class: 'btn btn-small', text: 'いますぐ書き出す',
+      onclick: function () { exportJson(); },
+    }));
+    notice.appendChild(el('button', {
+      type: 'button', class: 'btn btn-small', text: 'あとで',
+      onclick: function () { backupNoticeDismissed = true; notice.hidden = true; },
+    }));
+    notice.hidden = false;
+  }
+
+  function exportJson() {
+    download('shift-single-data.json', JSON.stringify(data, null, 2), 'application/json');
+    markBackedUp();
+    setStatus('#data-status', '書き出しました');
   }
 
   // ---------------- タブ ----------------
@@ -328,6 +412,7 @@
     resetStaffForm();
     renderStaffTable();
     renderCounts();
+    renderBackupNotice();
     setStatus('#staff-status', idx >= 0 ? '保存しました' : name + ' を追加しました');
   }
 
@@ -815,6 +900,8 @@
   // ---------------- 起動 ----------------
 
   function renderAll() {
+    renderTrialBanner();
+    renderBackupNotice();
     renderStoreForm();
     renderRoles();
     renderLevelLabels();
@@ -905,10 +992,7 @@
       renderAll();
       setStatus('#data-status', 'サンプルを読み込みました');
     });
-    $('#btn-export').addEventListener('click', function () {
-      download('shift-single-data.json', JSON.stringify(data, null, 2), 'application/json');
-      setStatus('#data-status', '書き出しました');
-    });
+    $('#btn-export').addEventListener('click', exportJson);
     $('#btn-import').addEventListener('click', function () { $('#import-file').click(); });
     $('#import-file').addEventListener('change', function (e) {
       const file = e.target.files && e.target.files[0];

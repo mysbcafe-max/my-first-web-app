@@ -69,14 +69,39 @@ https://mysbcafe-max.github.io/my-first-web-app/shift-single/
 
 「店舗設定」タブの業態ひな形を選んで適用すると、役割・レベルの呼び方・時間帯をまとめて差し替えられます。役割の追加・名前変更・削除も自由にできます。
 
+### 店舗に試用してもらうとき
+
+店舗に渡す URL は次の 2 つです。
+
+| 用途 | URL |
+|---|---|
+| 最初に読んでもらう案内 | https://mysbcafe-max.github.io/my-first-web-app/shift-single/guide.html |
+| ツール本体(ブックマーク用) | https://mysbcafe-max.github.io/my-first-web-app/shift-single/ |
+
+試用期間の案内を出すには、`shift-single/trial.js` の 3 行を書き換えます。
+
+```js
+storeName: 'au ショップ 〇〇店',   // 店舗名
+startDate: '2026-09-15',          // 試用開始日(ここを入れると案内が出る)
+contact: 'shift@example.com',     // 困ったときの連絡先
+```
+
+終了日は「開始日 + `months`(既定 3)か月 の前日」で自動計算され、案内・ツール画面の上に
+「試用期間中(残り○日)」と表示されます。終了 14 日前から色が変わり、終了後は終了した旨を表示します。
+**試用期間が過ぎてもツールが使えなくなることはありません**(機能制限はかけていません)。
+
+データはブラウザ内にしか無いため、1 週間以上バックアップしていないと画面上部で書き出しをうながします。
+
 ファイル構成:
 
 | ファイル | 役割 |
 |---|---|
 | `shift-single/index.html` | 画面 |
+| `shift-single/guide.html` | 店舗向けのご利用案内(試用時に最初に渡すページ) |
 | `shift-single/style.css` | スタイル |
 | `shift-single/app.js` | 画面の処理(保存・フォーム・結果表示) |
 | `shift-single/scheduler.js` | 生成ロジック(UI に依存しない) |
+| `shift-single/trial.js` | 試用期間の設定と判定 |
 | `shift-single/test/` | ロジックのテスト(`node --test "shift-single/test/*.test.js"`) |
 
 ### 生成ロジックの概要
