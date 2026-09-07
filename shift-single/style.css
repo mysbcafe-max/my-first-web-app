@@ -250,3 +250,12 @@ tbody tr:nth-child(even) { background: #fafbfc; }
   .shift-grid th, .shift-grid td { padding: 1px 2px; }
   .shift-grid .name-col { position: static; }
 }
+
+/* ---- 勤務日数の一括編集 ---- */
+.bulk-apply { display: flex; align-items: center; gap: 0.4rem; flex-wrap: wrap; }
+.bulk-apply span { white-space: nowrap; font-size: 0.95rem; }
+.bulk-apply select { width: auto; min-width: 8rem; }
+.bulk-apply input { width: 5rem; }
+#bulk-days-table select { width: 100%; min-width: 8rem; }
+#bulk-days-table input { width: 100%; max-width: 7rem; }
+#bulk-days-card summary { font-weight: 600; color: var(--text); font-size: 1rem; }

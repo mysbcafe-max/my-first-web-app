@@ -464,6 +464,7 @@
     save();
     resetStaffForm();
     renderStaffTable();
+    renderBulkDays();
     renderCounts();
     renderBackupNotice();
     setStatus('#staff-status', idx >= 0 ? '保存しました' : name + ' を追加しました');
@@ -477,6 +478,119 @@
   function hoursText(p) {
     if (!p.startLimit && !p.endLimit) return '—';
     return (p.startLimit || '') + '〜' + (p.endLimit || '') + (p.fixedStart && p.startLimit ? '(固定)' : '');
+  }
+
+  // 勤務日数の一括編集
+  function renderBulkDays() {
+    const table = $('#bulk-days-table');
+    if (!table) return;
+    table.textContent = '';
+
+    if (!data.staff.length) {
+      table.appendChild(el('tbody', {}, el('tr', {}, el('td', {
+        class: 'none', text: 'スタッフが登録されていません。',
+      }))));
+      renderBulkBalance();
+      return;
+    }
+
+    table.appendChild(el('thead', {}, el('tr', {}, [
+      el('th', { text: '名前' }),
+      el('th', { text: '基準' }),
+      el('th', { class: 'num', text: '日数' }),
+      el('th', { class: 'num', text: '出勤日数' }),
+    ])));
+
+    const total = S.eachDate(data.store.periodStart, data.store.periodEnd).length;
+    const body = el('tbody');
+
+    data.staff.forEach(function (person) {
+      const workCell = el('td', { class: 'num' });
+
+      function currentMode() {
+        return person.dayCountMode || data.store.dayCountMode || 'work';
+      }
+
+      function updateWorkCell() {
+        const mode = currentMode();
+        const days = mode === 'holiday'
+          ? Math.max(0, total - (Number(person.holidayDays) || 0))
+          : (Number(person.targetDays) || 0);
+        workCell.textContent = days + '日';
+      }
+
+      const modeSelect = el('select', {}, [
+        el('option', { value: '', text: '店舗の既定' }),
+        el('option', { value: 'work', text: '出勤日数' }),
+        el('option', { value: 'holiday', text: '公休日数' }),
+      ]);
+      modeSelect.value = person.dayCountMode || '';
+      modeSelect.addEventListener('change', function () {
+        // 基準を切り替えても、実際の出勤日数が変わらないように引き継ぐ
+        const before = currentMode();
+        const beforeDays = before === 'holiday'
+          ? Math.max(0, total - (Number(person.holidayDays) || 0))
+          : (Number(person.targetDays) || 0);
+        person.dayCountMode = modeSelect.value;
+        const after = currentMode();
+        if (after !== before && total > 0) {
+          if (after === 'holiday') person.holidayDays = Math.max(0, total - beforeDays);
+          else person.targetDays = beforeDays;
+        }
+        save();
+        renderBulkDays();
+        renderStaffTable();
+      });
+
+      const isHoliday = currentMode() === 'holiday';
+      const numInput = el('input', {
+        type: 'number', min: '0', max: '31', step: '1',
+        value: isHoliday
+          ? (person.holidayDays === undefined ? 9 : person.holidayDays)
+          : (person.targetDays === undefined ? 20 : person.targetDays),
+      });
+      numInput.addEventListener('input', function () {
+        const v = Math.max(0, Number(numInput.value) || 0);
+        if (currentMode() === 'holiday') person.holidayDays = v;
+        else person.targetDays = v;
+        save();
+        updateWorkCell();
+        renderBulkBalance();
+      });
+      numInput.addEventListener('change', renderStaffTable);
+
+      updateWorkCell();
+      body.appendChild(el('tr', {}, [
+        el('td', { text: person.name }),
+        el('td', {}, modeSelect),
+        el('td', { class: 'num' }, numInput),
+        workCell,
+      ]));
+    });
+
+    table.appendChild(body);
+    renderBulkBalance();
+  }
+
+  // 必要量と登録した日数の見合いを出す
+  function renderBulkBalance() {
+    const box = $('#bulk-balance');
+    if (!box) return;
+    if (!data.staff.length || !data.store.slots.length) {
+      box.textContent = '';
+      return;
+    }
+    const b = S.estimateBalance(data.store, data.staff);
+    const fc = S.formatCount;
+    const diff = b.diff;
+    const judge = diff < -0.001
+      ? '人手が ' + fc(Math.abs(diff)) + 'カウント足りません(足りない日は平日を薄くして回します)'
+      : diff > 0.001
+        ? '人手が ' + fc(diff) + 'カウント多めです(全員ぶんの日数を使い切れないことがあります)'
+        : 'ちょうど足りています';
+    box.textContent = 'この期間に必要: ' + fc(b.requiredCount) + 'カウント / '
+      + '登録した勤務日数: ' + fc(b.supplyCount) + 'カウント(のべ ' + b.supplyDays + '日)。' + judge;
+    box.className = 'help' + (diff < -0.001 ? ' diff-minus' : '');
   }
 
   function renderStaffTable() {
@@ -525,7 +639,7 @@
               copy.id = nextId('staff', data.staff);
               copy.name = p.name + ' のコピー';
               data.staff.push(copy);
-              save(); renderStaffTable(); renderCounts();
+              save(); renderStaffTable(); renderBulkDays(); renderCounts();
             },
           }),
           el('button', {
@@ -533,7 +647,7 @@
             onclick: function () {
               if (!window.confirm(p.name + ' を削除しますか?')) return;
               data.staff = data.staff.filter(function (x) { return x.id !== p.id; });
-              save(); resetStaffForm(); renderStaffTable(); renderCounts();
+              save(); resetStaffForm(); renderStaffTable(); renderBulkDays(); renderCounts();
             },
           }),
         ])),
@@ -1215,6 +1329,7 @@
     renderLevelLabels();
     renderSlots();
     renderStaffCheckboxes();
+    renderBulkDays();
     renderStaffTable();
     renderCounts();
     fillOptionForm();
@@ -1226,6 +1341,22 @@
 
     $('#form-staff').addEventListener('submit', onStaffSubmit);
     $('#btn-staff-cancel').addEventListener('click', resetStaffForm);
+    $('#btn-bulk-apply').addEventListener('click', function () {
+      if (!data.staff.length) return;
+      const mode = $('#bulk-mode').value;
+      const value = Math.max(0, Number($('#bulk-value').value) || 0);
+      const label = mode === 'holiday' ? '公休' : '出勤';
+      if (!window.confirm('全員(' + data.staff.length + '人)を ' + label + value + '日 にします。よろしいですか?')) return;
+      data.staff.forEach(function (person) {
+        person.dayCountMode = mode;
+        if (mode === 'holiday') person.holidayDays = value;
+        else person.targetDays = value;
+      });
+      save();
+      renderBulkDays();
+      renderStaffTable();
+      setStatus('#bulk-status', '全員を ' + label + value + '日 にしました');
+    });
     $('#form-staff').elements.dayCountMode.addEventListener('change', syncDayCountFields);
     $('#form-staff').elements.holidayDays.addEventListener('input', syncDayCountFields);
     $('#btn-add-dayoff').addEventListener('click', function () {
@@ -1251,6 +1382,7 @@
       if (name === 'dayCountMode' || name === 'periodStart' || name === 'periodEnd') {
         syncDayCountFields();
         renderStaffTable();
+        renderBulkDays();
       }
       if (name === 'useHolidays' || name === 'periodStart' || name === 'periodEnd') {
         renderHolidayPreview();
