@@ -974,6 +974,7 @@
     });
 
     renderWarnings(warnBox, result);
+    renderShiftGrid(result);
     renderMatrix(result);
     renderStaffResult(result);
   }
@@ -1007,6 +1008,73 @@
     if (!any) {
       box.appendChild(el('div', { class: 'notice notice-ok', text: '必要人数・リーダー要件・出勤日数をすべて満たすシフトができました。' }));
     }
+  }
+
+  // 完成版のシフト表(縦=スタッフ / 横=日付)
+  function renderShiftGrid(result) {
+    const table = $('#result-shift-grid');
+    table.textContent = '';
+    const m = S.toStaffMatrix(result);
+
+    function dayClass(d) {
+      if (d.closed) return 'closed-col';
+      if (d.holidayName) return 'sun';
+      if (d.weekday === 0) return 'sun';
+      if (d.weekday === 6) return 'sat';
+      return null;
+    }
+
+    const head = el('tr', {}, [el('th', { class: 'name-col', text: 'スタッフ' })].concat(
+      m.days.map(function (d) {
+        return el('th', {
+          class: dayClass(d),
+          title: d.date + (d.holidayName ? ' ' + d.holidayName : ''),
+        }, [String(d.day), el('small', { text: d.weekdayLabel })]);
+      }),
+      [el('th', { class: 'num', text: '出勤' }), el('th', { class: 'num', text: '休' })]
+    ));
+    table.appendChild(el('thead', {}, head));
+
+    const body = el('tbody');
+    m.rows.forEach(function (row) {
+      const cells = row.cells.map(function (c, i) {
+        const d = m.days[i];
+        if (d.closed) return el('td', { class: 'closed-col', text: '休' });
+        if (!c) return el('td', { class: dayClass(d) });
+        return el('td', {
+          class: (dayClass(d) ? dayClass(d) + ' ' : '') + 'on-duty',
+          title: c.slotName + ' ' + c.start + '〜' + c.end + (c.isLeader ? '(リーダー)' : ''),
+        }, [
+          c.short,
+          c.shortened ? el('small', { class: 'short-time', text: c.end } ) : null,
+        ]);
+      });
+      body.appendChild(el('tr', {}, [el('th', { class: 'name-col', text: row.name })].concat(
+        cells,
+        [
+          el('td', { class: 'num', text: row.assignedDays }),
+          el('td', { class: 'num', text: row.restDays }),
+        ]
+      )));
+    });
+
+    // 日ごとの合計カウント
+    const totals = el('tr', { class: 'total-row' }, [el('th', { class: 'name-col', text: '合計' })].concat(
+      m.days.map(function (d) {
+        return el('td', {
+          class: (dayClass(d) ? dayClass(d) + ' ' : '') + (d.dayRequired > 0 && d.assignedCount < d.dayRequired ? 'diff-minus' : ''),
+          text: d.closed ? '' : S.formatCount(d.assignedCount),
+        });
+      }),
+      [el('td', {}), el('td', {})]
+    ));
+    body.appendChild(totals);
+    table.appendChild(body);
+
+    const legend = $('#shift-grid-legend');
+    legend.textContent = '記号: ' + (result.slots || []).map(function (slot) {
+      return S.slotShortName(slot) + ' = ' + slot.name + '(' + slot.start + '〜' + slot.end + ')';
+    }).join(' / ') + '。空欄は休み、時短の人はマスに退勤時刻を出しています。';
   }
 
   function renderMatrix(result) {
@@ -1259,6 +1327,9 @@
     });
 
     $('#form-generate').addEventListener('submit', onGenerate);
+    $('#btn-csv-grid').addEventListener('click', function () {
+      if (lastResult && lastResult.ok) download(csvName('grid'), '\ufeff' + S.toCsvMatrix(lastResult), 'text/csv;charset=utf-8');
+    });
     $('#btn-csv-date').addEventListener('click', function () {
       if (lastResult && lastResult.ok) download(csvName('by-date'), '﻿' + S.toCsvByDate(lastResult), 'text/csv;charset=utf-8');
     });

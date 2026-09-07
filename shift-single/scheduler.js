@@ -1483,6 +1483,93 @@
     return rows.map((r) => r.map(csvEscape).join(',')).join('\n');
   }
 
+  // 「C(早番)」→「C」のように、表に収まる短い呼び方にする
+  function slotShortName(slot) {
+    const name = String(slot.name || '');
+    const head = name.split('(')[0].trim();
+    return (head || name).slice(0, 4);
+  }
+
+  /*
+   * 完成版のシフト表(縦=スタッフ / 横=日付)。
+   * 店舗に貼り出す形式。1 マスに「その日どの時間帯に入るか」を出す。
+   */
+  function toStaffMatrix(result) {
+    const days = result.days.map((day) => ({
+      date: day.date,
+      day: Number(day.date.slice(8, 10)),
+      weekday: day.weekday,
+      weekdayLabel: day.weekdayLabel,
+      holidayName: day.holidayName,
+      busy: day.busy,
+      closed: day.closed,
+      assignedCount: day.assignedCount,
+      dayRequired: day.dayRequired,
+    }));
+
+    // 日付 → スタッフID → 勤務内容
+    const byDate = {};
+    result.days.forEach((day) => {
+      byDate[day.date] = {};
+      day.cells.forEach((cell) => {
+        cell.assigned.forEach((a) => {
+          byDate[day.date][a.id] = {
+            slotId: cell.slot.id,
+            slotName: cell.slot.name,
+            short: slotShortName(cell.slot),
+            role: a.role,
+            roleLabel: a.roleLabel,
+            start: a.start,
+            end: a.end,
+            shortened: a.shortened,
+            isLeader: a.isLeader,
+            count: a.count,
+          };
+        });
+      });
+    });
+
+    const rows = result.staffSummary.map((row) => ({
+      id: row.id,
+      name: row.name,
+      level: row.level,
+      targetDays: row.targetDays,
+      assignedDays: row.assignedDays,
+      restDays: row.restDays,
+      dayCountMode: row.dayCountMode,
+      holidayTarget: row.holidayTarget,
+      cells: days.map((d) => (d.closed ? null : (byDate[d.date][row.id] || null))),
+    }));
+
+    return { days: days, rows: rows };
+  }
+
+  // 完成版シフト表を CSV に(Excel に貼り付けて使える形)
+  function toCsvMatrix(result) {
+    const m = toStaffMatrix(result);
+    const header = ['スタッフ'].concat(
+      m.days.map((d) => d.day + '(' + d.weekdayLabel + ')'),
+      ['出勤', '休み']
+    );
+    const rows = [header];
+    m.rows.forEach((row) => {
+      rows.push([row.name].concat(
+        row.cells.map((c, i) => {
+          if (m.days[i].closed) return '休';
+          if (!c) return '';
+          return c.shortened ? c.short + '(' + c.start + '〜' + c.end + ')' : c.short;
+        }),
+        [row.assignedDays, row.restDays]
+      ));
+    });
+    // 最後に日ごとの合計カウント
+    rows.push(['合計カウント'].concat(
+      m.days.map((d) => (d.closed ? '' : formatCount(d.assignedCount))),
+      ['', '']
+    ));
+    return rows.map((r) => r.map(csvEscape).join(',')).join('\n');
+  }
+
   // 日付 × 時間帯の表(画面・印刷用)
   function toMatrix(result) {
     return result.days.map((day) => ({
@@ -1634,6 +1721,9 @@
     toCsvByDate: toCsvByDate,
     toCsvByStaff: toCsvByStaff,
     toMatrix: toMatrix,
+    toStaffMatrix: toStaffMatrix,
+    toCsvMatrix: toCsvMatrix,
+    slotShortName: slotShortName,
     sampleData: sampleData,
     eachDate: eachDate,
     addDays: addDays,

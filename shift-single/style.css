@@ -222,3 +222,31 @@ tbody tr:nth-child(even) { background: #fafbfc; }
 .closed-grid th, .closed-grid td { padding: 0.3rem 0.5rem; text-align: center; }
 .closed-grid tbody th { background: #f0f2f5; font-weight: 600; }
 .closed-grid input { width: auto; }
+
+/* ---- 完成版シフト表(スタッフ × 日付)---- */
+.shift-grid { font-size: 0.8rem; border-collapse: collapse; }
+.shift-grid th, .shift-grid td { padding: 0.2rem 0.3rem; text-align: center; white-space: nowrap; }
+.shift-grid thead th { background: #f0f2f5; font-weight: 600; }
+.shift-grid thead th small { display: block; font-size: 0.7rem; font-weight: normal; }
+.shift-grid .name-col {
+  position: sticky; left: 0; z-index: 2; background: var(--surface);
+  text-align: left; min-width: 8rem; max-width: 12rem;
+  overflow: hidden; text-overflow: ellipsis;
+}
+.shift-grid thead .name-col { background: #f0f2f5; z-index: 3; }
+.shift-grid tbody tr:nth-child(even) { background: #fafbfc; }
+.shift-grid tbody tr:nth-child(even) .name-col { background: #fafbfc; }
+.shift-grid td.on-duty { background: var(--role-bg); color: var(--role-ink); font-weight: 600; }
+.shift-grid td.closed-col, .shift-grid th.closed-col { background: #eceff3; color: var(--muted); }
+.shift-grid td.sun, .shift-grid th.sun { background: var(--weekend-bg); }
+.shift-grid td.sat, .shift-grid th.sat { background: #eff6ff; }
+.shift-grid td.on-duty.sun, .shift-grid td.on-duty.sat { background: var(--role-bg); }
+.shift-grid td.on-duty small { display: block; font-size: 0.65rem; font-weight: normal; }
+.shift-grid .total-row { background: #f0f2f5; font-weight: 600; }
+.shift-grid .total-row .name-col { background: #f0f2f5; }
+
+@media print {
+  .shift-grid { font-size: 8px; }
+  .shift-grid th, .shift-grid td { padding: 1px 2px; }
+  .shift-grid .name-col { position: static; }
+}
