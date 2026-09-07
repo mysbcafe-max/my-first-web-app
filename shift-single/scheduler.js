@@ -1589,6 +1589,69 @@
     }));
   }
 
+  /*
+   * この期間に必要な量と、登録した勤務日数の見合いを返す。
+   * 出勤日数を編集するときの目安に使う。
+   */
+  function estimateBalance(rawStore, rawStaff) {
+    const store = normalizeStore(rawStore);
+    const staff = normalizeStaff(rawStaff, store.slots.map((s) => s.id), store.roles.map((r) => r.id));
+    const dates = eachDate(store.periodStart, store.periodEnd);
+
+    let requiredCount = 0;
+    let openDays = 0;
+    dates.forEach((date) => {
+      if (isClosedDate(store, date)) return;
+      const wd = weekdayOf(date);
+      const slotSum = store.slots
+        .filter((slot) => slot.weekdays.indexOf(wd) >= 0)
+        .reduce((n, slot) => n + requiredOf(slot, date, store), 0);
+      const need = Math.max(slotSum, requiredDayCount(store, date));
+      if (need > 0) {
+        requiredCount += need;
+        openDays += 1;
+      }
+    });
+
+    let supplyDays = 0;
+    let supplyCount = 0;
+    const rows = staff.map((s) => {
+      const mode = s.dayCountMode || store.dayCountMode;
+      const days = mode === 'holiday' ? Math.max(0, dates.length - s.holidayDays) : s.targetDays;
+      // 時短の人は 0.5 として数える(枠ごとの判定はできないので概算)
+      let per = s.headcount;
+      if (per === null) {
+        const usable = store.slots.filter((slot) => s.availableSlots.indexOf(slot.id) >= 0);
+        per = usable.length
+          ? usable.reduce((n, slot) => {
+            const span = effectiveSpan(s, slot);
+            return n + (span && span.shortened ? 0.5 : 1);
+          }, 0) / usable.length
+          : 1;
+      }
+      supplyDays += days;
+      supplyCount += days * per;
+      return {
+        id: s.id,
+        name: s.name,
+        mode: mode,
+        inputDays: mode === 'holiday' ? s.holidayDays : s.targetDays,
+        workDays: days,
+        headcount: per,
+      };
+    });
+
+    return {
+      periodDays: dates.length,
+      openDays: openDays,
+      requiredCount: round1(requiredCount),
+      supplyDays: supplyDays,
+      supplyCount: round1(supplyCount),
+      diff: round1(supplyCount - requiredCount),
+      rows: rows,
+    };
+  }
+
   // ---------------- プリセット・サンプルデータ ----------------
 
   // プリセットの内容を店舗設定の形(roles / levelLabels / slots)に展開する
@@ -1724,6 +1787,7 @@
     toStaffMatrix: toStaffMatrix,
     toCsvMatrix: toCsvMatrix,
     slotShortName: slotShortName,
+    estimateBalance: estimateBalance,
     sampleData: sampleData,
     eachDate: eachDate,
     addDays: addDays,

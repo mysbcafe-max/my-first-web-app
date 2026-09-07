@@ -150,6 +150,26 @@
         </div>
       </form>
 
+      <details class="form-card" id="bulk-days-card" open>
+        <summary>勤務日数をまとめて編集</summary>
+        <p class="help">毎月変わる出勤日数・公休日数を、この表で一覧のまま直せます。入力するとその場で保存されます。</p>
+        <div class="form-actions">
+          <label class="bulk-apply">
+            <span>全員を</span>
+            <select id="bulk-mode">
+              <option value="work">出勤日数</option>
+              <option value="holiday">公休日数</option>
+            </select>
+            <input type="number" id="bulk-value" min="0" max="31" step="1" value="20">
+            <span>日にする</span>
+          </label>
+          <button type="button" class="btn" id="btn-bulk-apply">全員に適用</button>
+          <span class="status" id="bulk-status"></span>
+        </div>
+        <div class="table-wrap"><table class="list" id="bulk-days-table"></table></div>
+        <p class="help" id="bulk-balance"></p>
+      </details>
+
       <div class="table-wrap">
         <table class="list" id="staff-table"></table>
       </div>
