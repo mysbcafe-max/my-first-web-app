@@ -152,7 +152,7 @@ test('できる役割が 1 つもないスタッフは使わず、設定の警�
   assert.ok(r.warnings.some((w) => w.type === 'setup' && /できる役割/.test(w.message)));
 });
 
-test('必要人数が役割の必須人数の合計より少なければ合計まで増やす', () => {
+test('役割ごとの必須人数は実人数なので、必要カウントより多く入ることがある', () => {
   const store = makeStore({
     slots: [{ id: 'a', name: '早番', required: 1, requiredByRole: { r1: 1, r2: 1 }, leaderLevel: 0 }],
   });
@@ -161,10 +161,12 @@ test('必要人数が役割の必須人数の合計より少なければ合計�
     makeStaff({ id: 'k', name: 'K', roles: ['r2'] }),
   ];
   const r = run(store, staff, { maxConsecutiveDays: 0 });
-  assert.ok(r.warnings.some((w) => w.type === 'setup' && /必要人数/.test(w.message)));
+  assert.ok(r.warnings.some((w) => w.type === 'setup' && /実人数/.test(w.message)));
   r.days.forEach((day) => day.cells.forEach((cell) => {
-    assert.strictEqual(cell.required, 2);
-    assert.strictEqual(cell.assigned.length, 2);
+    assert.strictEqual(cell.required, 1, '必要カウントは設定どおり');
+    assert.strictEqual(cell.assigned.length, 2, '役割の必須人数は満たす');
+    assert.strictEqual(cell.assignedCount, 2);
+    assert.strictEqual(cell.shortCount, 0);
   }));
 });
 
@@ -316,8 +318,9 @@ test('枠を設ける曜日を絞れる', () => {
 
 // ---------------- 不足の警告 ----------------
 
-test('人数が足りないときは不足として警告に出す', () => {
+test('人数が足りないときは不足として警告に出す(自動調整オフ)', () => {
   const store = makeStore({
+    autoRelax: false,
     slots: [{ id: 'a', name: '早番', required: 3, requiredByRole: {}, leaderLevel: 0 }],
   });
   const staff = [makeStaff({ id: 'a', name: 'A' })];

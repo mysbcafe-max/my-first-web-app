@@ -32,6 +32,7 @@
         「スタッフ」タブで登録した情報(できる役割・レベル・勤務日数・勤務時間・希望休など)と、
         「店舗設定」タブの時間帯ごとの必要人数から、1 か月分のシフト表を作ります。
         勤務日数は出勤日数でも公休日数でも指定でき、設定した日数に近づけます。
+        人数は<strong>通常スタッフ 1・時短スタッフ 0.5 のカウント</strong>で数え、時間帯ごと・1 日ごとの下限を満たすように組みます。
         締め作業・開店準備がある枠には、その時間まで居られて担当できる人を必ず 1 人入れます。
       </p>
 
@@ -134,6 +135,7 @@
             </div>
             <div class="chips" id="staff-daysoff"></div>
           </div>
+          <label>人数カウント <input type="number" name="headcount" min="0" max="5" step="0.5" placeholder="自動"> <small>空欄なら自動(時短は 0.5、それ以外は 1)</small></label>
           <label>連勤上限(任意) <input type="number" name="maxConsecutiveDays" min="0" max="14" step="1" placeholder="全体設定を使う"></label>
           <label class="form-grid__full">メモ <input type="text" name="note" placeholder="レジ担当、土日は夕方から など"></label>
         </div>
@@ -187,6 +189,19 @@
             <div class="chips" id="store-closed-dates"></div>
           </div>
           <fieldset class="form-grid__full">
+            <legend>人手が足りないとき</legend>
+            <label class="check-inline"><input type="checkbox" name="autoRelax" checked> 足りない日が出るなら、平日を薄くして全体を回す</label>
+            <p class="help">土日祝は薄くしません。必要量を満たしたあと、残っている出勤日数は人の少ない日に配ります。</p>
+          </fieldset>
+          <fieldset class="form-grid__full">
+            <legend>1日の合計カウント(下限)</legend>
+            <p class="help">通常スタッフ 1・時短スタッフ 0.5 で数えた、その日の合計の下限です。空欄なら使いません(時間帯ごとの必要カウントだけで組みます)。</p>
+            <div class="form-grid">
+              <label>平日 <input type="number" name="dayMinCount" min="0" max="50" step="0.5" placeholder="使わない"></label>
+              <label>土日祝 <input type="number" name="dayMinCountWeekend" min="0" max="50" step="0.5" placeholder="平日と同じ"></label>
+            </div>
+          </fieldset>
+          <fieldset class="form-grid__full">
             <legend>多めに配置する日</legend>
             <label class="check-inline"><input type="checkbox" name="useHolidays" checked> 祝日も土日と同じ人数にする</label>
             <p class="help" id="holiday-preview"></p>
@@ -222,7 +237,10 @@
       <div class="form-grid" id="level-labels"></div>
 
       <h3>時間帯(シフト枠)</h3>
-      <p class="help">1 日の中の勤務パターンです。必要人数のうち、役割ごとに必ず確保したい人数を指定できます。</p>
+      <p class="help">
+        1 日の中の勤務パターンです。必要カウントは「通常スタッフ 1・時短スタッフ 0.5」で数えた合計の下限です。
+        役割ごとの必須人数は<strong>実人数</strong>で指定します(フロア 1 人なら、時短でも 1 人として確保します)。
+      </p>
       <div id="slot-list"></div>
       <div class="form-actions">
         <button type="button" class="btn" id="btn-add-slot">時間帯を追加</button>
