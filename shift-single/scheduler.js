@@ -17,11 +17,11 @@
  */
 (function (root, factory) {
   if (typeof module === 'object' && module.exports) {
-    module.exports = factory();
+    module.exports = factory(require('./holidays.js'));
   } else {
-    root.SingleShiftScheduler = factory();
+    root.SingleShiftScheduler = factory(root.ShiftHolidays);
   }
-})(typeof globalThis !== 'undefined' ? globalThis : this, function () {
+})(typeof globalThis !== 'undefined' ? globalThis : this, function (Holidays) {
   'use strict';
 
   const WEEKDAY_LABELS = ['日', '月', '火', '水', '木', '金', '土'];
@@ -273,6 +273,10 @@
       periodEnd: String(src.periodEnd || ''),
       closedWeekdays: normalizeWeekdays(src.closedWeekdays, []),
       closedDates: normalizeDates(src.closedDates),
+      // 祝日を土日と同じ「多めに配置する日」として扱うか
+      useHolidays: src.useHolidays === undefined ? true : !!src.useHolidays,
+      // 土日祝のほかに、多めに配置したい日(セール日など)
+      busyDates: normalizeDates(src.busyDates),
       roles: roles,
       levelLabels: normalizeLevelLabels(src.levelLabels),
       // 勤務日数の既定の数え方: 'work'(出勤日数) / 'holiday'(公休日数)
@@ -323,12 +327,24 @@
     return wd === 0 || wd === 6;
   }
 
+  function holidayNameOf(date) {
+    return Holidays && Holidays.nameOf ? Holidays.nameOf(date) : '';
+  }
+
+  // 多めに配置する日(土日・祝日・店舗が指定した繁忙日)
+  function isBusyDay(store, date) {
+    if (isWeekend(date)) return true;
+    if (store.busyDates.indexOf(date) >= 0) return true;
+    return !!(store.useHolidays && holidayNameOf(date));
+  }
+
   function roleSum(slot) {
     return Object.keys(slot.requiredByRole).reduce((n, k) => n + slot.requiredByRole[k], 0);
   }
 
-  function requiredOf(slot, date) {
-    const base = isWeekend(date) && slot.requiredWeekend !== null ? slot.requiredWeekend : slot.required;
+  function requiredOf(slot, date, store) {
+    const busy = store ? isBusyDay(store, date) : isWeekend(date);
+    const base = busy && slot.requiredWeekend !== null ? slot.requiredWeekend : slot.required;
     return Math.max(base, roleSum(slot));
   }
 
@@ -469,7 +485,7 @@
         .filter((slot) => slot.weekdays.indexOf(wd) >= 0)
         .map((slot) => ({
           slot: slot,
-          required: requiredOf(slot, date),
+          required: requiredOf(slot, date, store),
           assigned: [],
           unfilled: [],
           noLeader: false,
@@ -477,7 +493,15 @@
           noOpener: false,
         }))
         .filter((cell) => cell.required > 0);
-      return { date: date, weekday: wd, weekdayLabel: WEEKDAY_LABELS[wd], closed: closed, cells: cells };
+      return {
+        date: date,
+        weekday: wd,
+        weekdayLabel: WEEKDAY_LABELS[wd],
+        holidayName: store.useHolidays ? holidayNameOf(date) : '',
+        busy: isBusyDay(store, date),
+        closed: closed,
+        cells: cells,
+      };
     });
 
     const openDays = days.filter((d) => !d.closed && d.cells.length);
@@ -744,6 +768,65 @@
       return false;
     }
 
+    // 開店準備・締め作業の担当がいない枠を、同じ日の枠との交換で埋める
+    // (人数は動かさず、その日のうちで担当を入れ替えるだけ)
+    function dutyOk(s, slot, kind) {
+      return kind === 'close' ? canCloseFor(s, slot) : canOpenFor(s, slot);
+    }
+
+    /*
+     * ある枠から removeId を抜いて addStaff を入れても、条件が悪くならないか。
+     * もともと満たせていない条件(例: すでにリーダー不在)は、
+     * ほかの条件を直す妨げにしない。
+     */
+    function stillSatisfies(cell, removeId, addStaff, addRole) {
+      const rest = cell.assigned.filter((a) => a.id !== removeId);
+      const lead = cell.slot.leaderLevel;
+      if (lead > 0 && cell.assigned.some((a) => a.level >= lead)
+        && !rest.some((a) => a.level >= lead) && addStaff.level < lead) return false;
+      if (cell.slot.requiresClose && cellHasCloser(cell)
+        && !rest.some((a) => a.canClose && a.coversClose)
+        && !canCloseFor(addStaff, cell.slot)) return false;
+      if (cell.slot.requiresOpen && cellHasOpener(cell)
+        && !rest.some((a) => a.canOpen && a.coversOpen)
+        && !canOpenFor(addStaff, cell.slot)) return false;
+      return canServe(addStaff, addRole) && !!effectiveSpan(addStaff, cell.slot);
+    }
+
+    function trySwapForDuty(day, target, kind) {
+      for (let bi = 0; bi < day.cells.length; bi += 1) {
+        const other = day.cells[bi];
+        if (other === target) continue;
+        for (let ai = 0; ai < other.assigned.length; ai += 1) {
+          const a = other.assigned[ai];
+          const x = staffById[a.id];
+          if (!dutyOk(x, target.slot, kind)) continue;
+          if (x.availableSlots.indexOf(target.slot.id) < 0) continue;
+
+          for (let ti = 0; ti < target.assigned.length; ti += 1) {
+            const b = target.assigned[ti];
+            const y = staffById[b.id];
+            if (y.availableSlots.indexOf(other.slot.id) < 0) continue;
+            // 交換しても両方の枠の条件が壊れないこと
+            if (!stillSatisfies(target, b.id, x, b.role)) continue;
+            if (!stillSatisfies(other, a.id, y, a.role)) continue;
+
+            const removedX = unassign(x, other);
+            const removedY = unassign(y, target);
+            assign(x, target, day.date, removedY.role, removedY.isLeader);
+            assign(y, other, day.date, removedX.role, removedX.isLeader);
+            [target, other].forEach((c) => {
+              if (c.slot.requiresClose) c.noCloser = !cellHasCloser(c);
+              if (c.slot.requiresOpen) c.noOpener = !cellHasOpener(c);
+              if (c.slot.leaderLevel > 0) c.noLeader = !c.assigned.some((z) => z.level >= c.slot.leaderLevel);
+            });
+            return true;
+          }
+        }
+      }
+      return false;
+    }
+
     function improveDay(day) {
       if (!opts.improve) return;
       for (let iter = 0; iter < 4; iter += 1) {
@@ -755,6 +838,11 @@
               changed = true;
             }
           }
+        });
+        // 人数を動かせなくても、担当の入れ替えで締め・開店を満たせることがある
+        day.cells.forEach((cell) => {
+          if (cell.slot.requiresClose && cell.noCloser && trySwapForDuty(day, cell, 'close')) changed = true;
+          if (cell.slot.requiresOpen && cell.noOpener && trySwapForDuty(day, cell, 'open')) changed = true;
         });
         if (!changed) break;
       }
@@ -924,10 +1012,10 @@
   // ---------------- CSV ----------------
 
   function toCsvByDate(result) {
-    const rows = [['日付', '曜日', '時間帯', '勤務開始', '勤務終了', '担当', 'スタッフ', 'レベル', '備考']];
+    const rows = [['日付', '曜日', '祝日', '時間帯', '勤務開始', '勤務終了', '担当', 'スタッフ', 'レベル', '備考']];
     result.days.forEach((day) => {
       if (day.closed) {
-        rows.push([day.date, day.weekdayLabel, '定休日', '', '', '', '', '']);
+        rows.push([day.date, day.weekdayLabel, day.holidayName, '定休日', '', '', '', '', '', '']);
         return;
       }
       day.cells.forEach((cell) => {
@@ -937,11 +1025,11 @@
           if (cell.slot.requiresClose && a.canClose && a.coversClose) notes.push('締め');
           if (cell.slot.requiresOpen && a.canOpen && a.coversOpen) notes.push('開店');
           if (a.shortened) notes.push('時短');
-          rows.push([day.date, day.weekdayLabel, cell.slot.name, a.start, a.end,
+          rows.push([day.date, day.weekdayLabel, day.holidayName, cell.slot.name, a.start, a.end,
             a.roleLabel, a.name, a.level, notes.join('・')]);
         });
         cell.unfilled.forEach((u) => {
-          rows.push([day.date, day.weekdayLabel, cell.slot.name, cell.slot.start, cell.slot.end,
+          rows.push([day.date, day.weekdayLabel, day.holidayName, cell.slot.name, cell.slot.start, cell.slot.end,
             u.roleLabel, '(不足)', '', '']);
         });
       });
@@ -980,6 +1068,8 @@
       date: day.date,
       weekdayLabel: day.weekdayLabel,
       weekday: day.weekday,
+      holidayName: day.holidayName,
+      busy: day.busy,
       closed: day.closed,
       cells: (result.slots || []).map((slot) => {
         const cell = day.cells.find((c) => c.slot.id === slot.id);
@@ -1030,7 +1120,7 @@
       ['山本 (フロア)', 2, [0, 2], 16],
       ['中村 (事務)', 3, [0, 2], 14, [1, 2, 3, 4, 5], [0]],
       ['小林 (学生)', 1, [0], 8, [0, 6], null, { canClose: false }],
-      ['加藤 (新人)', 1, [0], 14, null, null, { canOpen: false, canClose: false }],
+      ['加藤 (新人)', 1, [0], 14, null, null, { canClose: false }],
     ],
     restaurant: [
       ['佐藤 店長', 5, [0, 1], 20],
@@ -1119,6 +1209,7 @@
     addDays: addDays,
     effectiveSpan: effectiveSpan,
     isValidTime: isValidTime,
+    holidayNameOf: holidayNameOf,
     weekdayOf: weekdayOf,
     isValidDate: isValidDate,
   };

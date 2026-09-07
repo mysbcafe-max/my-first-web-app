@@ -86,6 +86,8 @@
         periodEnd: period.end,
         closedWeekdays: [],
         closedDates: [],
+        useHolidays: true,
+        busyDates: [],
         dayCountMode: 'work',
         roles: parts.roles,
         levelLabels: parts.levelLabels,
@@ -543,6 +545,7 @@
     form.elements.periodStart.value = data.store.periodStart || '';
     form.elements.periodEnd.value = data.store.periodEnd || '';
     form.elements.dayCountMode.value = data.store.dayCountMode || 'work';
+    form.elements.useHolidays.checked = data.store.useHolidays !== false;
 
     const box = $('#store-closed-weekdays');
     box.textContent = '';
@@ -561,6 +564,44 @@
     });
 
     renderClosedDates();
+    renderBusyDates();
+    renderHolidayPreview();
+  }
+
+  // 期間内の祝日を一覧で見せる(認識できているかを店舗が確認できるように)
+  function renderHolidayPreview() {
+    const box = $('#holiday-preview');
+    if (!box) return;
+    if (data.store.useHolidays === false) {
+      box.textContent = '祝日は平日と同じ人数で組みます。';
+      return;
+    }
+    const dates = S.eachDate(data.store.periodStart, data.store.periodEnd);
+    const list = dates
+      .map(function (d) { return { date: d, name: S.holidayNameOf(d) }; })
+      .filter(function (x) { return x.name; });
+    box.textContent = list.length
+      ? 'この期間の祝日: ' + list.map(function (x) {
+        return x.date.slice(5).replace('-', '/') + ' ' + x.name;
+      }).join('、')
+      : 'この期間に祝日はありません。';
+  }
+
+  function renderBusyDates() {
+    const box = $('#store-busy-dates');
+    box.textContent = '';
+    (data.store.busyDates || []).slice().sort().forEach(function (date) {
+      box.appendChild(el('span', { class: 'chip' }, [
+        date,
+        el('button', {
+          type: 'button', 'aria-label': date + ' を削除', text: '×',
+          onclick: function () {
+            data.store.busyDates = data.store.busyDates.filter(function (d) { return d !== date; });
+            save(); renderBusyDates();
+          },
+        }),
+      ]));
+    });
   }
 
   function renderClosedDates() {
@@ -708,7 +749,7 @@
         field('開始', bind('start', 'time')),
         field('終了', bind('end', 'time')),
         field('必要人数(平日)', bind('required', 'number', { min: '0', max: '30', step: '1' })),
-        field('必要人数(土日)', bind('requiredWeekend', 'number', { min: '0', max: '30', step: '1', placeholder: '平日と同じ' }), '空欄なら平日と同じ'),
+        field('必要人数(土日祝)', bind('requiredWeekend', 'number', { min: '0', max: '30', step: '1', placeholder: '平日と同じ' }), '空欄なら平日と同じ'),
       ]);
 
       // 役割ごとの必須人数
@@ -887,10 +928,11 @@
     const body = el('tbody');
     matrix.forEach(function (row) {
       const weekendClass = row.weekday === 0 ? 'sun' : row.weekday === 6 ? 'sat' : '';
-      const tr = el('tr', { class: (row.weekday === 0 || row.weekday === 6) ? 'is-weekend' : null });
+      const tr = el('tr', { class: row.busy ? 'is-weekend' : null });
       tr.appendChild(el('td', {}, [
         row.date.slice(5).replace('-', '/') + ' ',
-        el('span', { class: weekendClass, text: '(' + row.weekdayLabel + ')' }),
+        el('span', { class: row.holidayName ? 'sun' : weekendClass, text: '(' + row.weekdayLabel + ')' }),
+        row.holidayName ? el('small', { class: 'holiday-name', text: ' ' + row.holidayName }) : null,
       ]));
       if (row.closed) {
         tr.appendChild(el('td', { class: 'closed', colspan: String(Math.max(1, slots.length)), text: '定休日' }));
@@ -1026,11 +1068,14 @@
     function onStoreFieldChange(e) {
       const name = e.target.name;
       if (!name) return;
-      data.store[name] = e.target.value;
+      data.store[name] = e.target.type === 'checkbox' ? e.target.checked : e.target.value;
       save();
       if (name === 'dayCountMode' || name === 'periodStart' || name === 'periodEnd') {
         syncDayCountFields();
         renderStaffTable();
+      }
+      if (name === 'useHolidays' || name === 'periodStart' || name === 'periodEnd') {
+        renderHolidayPreview();
       }
     }
     $('#form-store').addEventListener('input', onStoreFieldChange);
@@ -1041,6 +1086,7 @@
       data.store.periodEnd = range.end;
       save();
       renderStoreForm();
+      syncDayCountFields();
       setStatus('#data-status', '');
     }
     $('#btn-period-this').addEventListener('click', function () { setPeriod(0); });
@@ -1070,6 +1116,16 @@
       if (!window.confirm('「' + S.PRESETS[key].label + '」のひな形で、役割・レベルの呼び方・時間帯を差し替えます。よろしいですか?')) return;
       applyPreset(key);
       setStatus('#data-status', '');
+    });
+    $('#btn-add-busy-date').addEventListener('click', function () {
+      const input = $('#store-busy-date');
+      const value = input.value;
+      if (!value) return;
+      data.store.busyDates = data.store.busyDates || [];
+      if (data.store.busyDates.indexOf(value) < 0) data.store.busyDates.push(value);
+      input.value = '';
+      save();
+      renderBusyDates();
     });
     $('#btn-add-slot').addEventListener('click', function () {
       const id = nextId('slot', data.store.slots);
