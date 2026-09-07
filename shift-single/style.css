@@ -217,3 +217,8 @@ tbody tr:nth-child(even) { background: #fafbfc; }
 .day-count { display: block; font-size: 0.75rem; color: var(--muted); }
 
 .notice-info { background: var(--info-bg); color: var(--info-ink); }
+
+.closed-grid { width: auto; min-width: 20rem; }
+.closed-grid th, .closed-grid td { padding: 0.3rem 0.5rem; text-align: center; }
+.closed-grid tbody th { background: #f0f2f5; font-weight: 600; }
+.closed-grid input { width: auto; }
