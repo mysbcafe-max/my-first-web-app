@@ -585,6 +585,10 @@
             slot: slot,
             required: requiredOf(slot, date, store),
             baseRequired: requiredOf(slot, date, store),
+            demands: roles.reduce((acc, role) => {
+              for (let i = 0; i < (slot.requiredByRole[role.id] || 0); i += 1) acc.push(role.id);
+              return acc;
+            }, []),
             assigned: [],
             unfilled: [],
             assignedCount: 0,
@@ -805,13 +809,55 @@
     }
 
     // 枠を埋める
+    /*
+     * 「必ず満たしたい条件」を1人ずつ埋める共通処理。
+     * 役割の必須枠から埋め、空きがなければフリー枠として入れる。
+     */
+    function placeInCell(cell, date, filter, isLeader) {
+      const demands = cell.demands;
+      // 候補が少ない役割から埋める。
+      // 単純に先頭から埋めると、リーダーが毎回同じ役割に入ってしまい、
+      // 候補の少ない役割(カウンターなど)が埋まらなくなる。
+      const scarcity = {};
+      demands.forEach((role) => {
+        if (scarcity[role] === undefined) scarcity[role] = candidatesFor(cell, date, role, null).length;
+      });
+      const order = demands.map((role, i) => i)
+        .sort((a, b) => (scarcity[demands[a]] - scarcity[demands[b]]) || (a - b));
+
+      for (let k = 0; k < order.length; k += 1) {
+        const i = order[k];
+        const role = demands[i];
+        const cands = candidatesFor(cell, date, role, null).filter(filter);
+        if (!cands.length) continue;
+        assign(pickBest(cands, cell, date), cell, date, role, isLeader);
+        demands.splice(i, 1);
+        return true;
+      }
+      const free = candidatesFor(cell, date, ANY_ROLE, null).filter(filter);
+      if (!free.length) return false;
+      assign(pickBest(free, cell, date), cell, date, ANY_ROLE, isLeader);
+      return true;
+    }
+
+    /*
+     * リーダーを先に押さえる。
+     * ほかのスタッフと同じ順番で取り合うと、リーダーの出勤日数が先に尽きて
+     * 後半の日がリーダー不在になるため、全日ぶんを先に確保する。
+     */
+    function ensureLeader(cell, date) {
+      const lead = cell.slot.leaderLevel;
+      if (lead <= 0) return true;
+      if (cell.assigned.some((a) => a.level >= lead)) return true;
+      if (placeInCell(cell, date, (s) => s.level >= lead, true)) return true;
+      cell.noLeader = true;
+      return false;
+    }
+
     function fillCell(cell, date) {
       const slot = cell.slot;
-      // 役割ごとの必須人数は「実人数」で確保する
-      const demands = [];
-      roles.forEach((role) => {
-        for (let i = 0; i < (slot.requiredByRole[role.id] || 0); i += 1) demands.push(role.id);
-      });
+      // 役割ごとの必須人数は「実人数」で確保する(demands はセル作成時に用意済み)
+      const demands = cell.demands;
 
       // 候補が少ない役割から埋める(あとから埋まらなくなるのを防ぐ)
       const scarcity = {};
@@ -820,40 +866,17 @@
       });
       demands.sort((a, b) => (scarcity[a] - scarcity[b]) || (a < b ? -1 : a > b ? 1 : 0));
 
-      /*
-       * 先に「必ず満たしたい条件」を1人ずつ埋める。
-       * 役割の必須枠から埋め、空きがなければフリー枠として入れる。
-       * すでに条件を満たす人が入っていれば、追加では取らない。
-       */
-      function placeRequirement(filter, mark) {
-        for (let i = 0; i < demands.length; i += 1) {
-          const role = demands[i];
-          const cands = candidatesFor(cell, date, role, null).filter(filter);
-          if (!cands.length) continue;
-          const best = pickBest(cands, cell, date);
-          assign(best, cell, date, role, mark === 'leader');
-          demands.splice(i, 1);
-          return true;
-        }
-        const free = candidatesFor(cell, date, ANY_ROLE, null).filter(filter);
-        if (!free.length) return false;
-        assign(pickBest(free, cell, date), cell, date, ANY_ROLE, mark === 'leader');
-        return true;
-      }
-
-      // リーダー要件
-      if (slot.leaderLevel > 0) {
-        if (!placeRequirement((s) => s.level >= slot.leaderLevel, 'leader')) cell.noLeader = true;
-      }
+      // リーダー要件(先に押さえていなければここで)
+      ensureLeader(cell, date);
 
       // 締め作業: 時短などで締めまで残れない人しかいない枠にならないようにする
       if (slot.requiresClose && !cellHasCloser(cell)) {
-        if (!placeRequirement((s) => canCloseFor(s, slot), 'close')) cell.noCloser = true;
+        if (!placeInCell(cell, date, (s) => canCloseFor(s, slot), false)) cell.noCloser = true;
       }
 
       // 開店準備
       if (slot.requiresOpen && !cellHasOpener(cell)) {
-        if (!placeRequirement((s) => canOpenFor(s, slot), 'open')) cell.noOpener = true;
+        if (!placeInCell(cell, date, (s) => canOpenFor(s, slot), false)) cell.noOpener = true;
       }
 
       // 役割ごとの必須人数
@@ -928,7 +951,9 @@
     // 開店準備・締め作業の担当がいない枠を、同じ日の枠との交換で埋める
     // (人数は動かさず、その日のうちで担当を入れ替えるだけ)
     function dutyOk(s, slot, kind) {
-      return kind === 'close' ? canCloseFor(s, slot) : canOpenFor(s, slot);
+      if (kind === 'close') return canCloseFor(s, slot);
+      if (kind === 'open') return canOpenFor(s, slot);
+      return s.level >= slot.leaderLevel;
     }
 
     /*
@@ -1000,6 +1025,7 @@
         day.cells.forEach((cell) => {
           if (cell.slot.requiresClose && cell.noCloser && trySwapForDuty(day, cell, 'close')) changed = true;
           if (cell.slot.requiresOpen && cell.noOpener && trySwapForDuty(day, cell, 'open')) changed = true;
+          if (cell.slot.leaderLevel > 0 && cell.noLeader && trySwapForDuty(day, cell, 'leader')) changed = true;
         });
         if (!changed) break;
       }
@@ -1024,6 +1050,19 @@
         const db = dayDifficulty(b);
         if (da !== db) return db - da;
         return a.date < b.date ? -1 : 1;
+      });
+
+      /*
+       * まず全日ぶんのリーダーを押さえる。
+       * リーダーは人数が限られているので、ほかの枠に使ってしまうと
+       * 後半の日で足りなくなる。日ごとの取り合いにしない。
+       */
+      order.forEach((day) => {
+        day.cells
+          .slice()
+          .sort((a, b) => (b.slot.leaderLevel - a.slot.leaderLevel)
+            || (a.slot.id < b.slot.id ? -1 : 1))
+          .forEach((cell) => ensureLeader(cell, day.date));
       });
 
       order.forEach((day) => {
