@@ -1,0 +1,342 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>出勤チェックイン(β)</title>
+<style>
+  :root {
+    --bg: #f4f6f9;
+    --card: #ffffff;
+    --text: #1f2933;
+    --sub: #6b7280;
+    --accent: #2563eb;
+    --accent-press: #1d4ed8;
+    --line: #e5e7eb;
+    --ok-bg: #ecfdf5;
+    --ok-text: #047857;
+    --warn-bg: #fffbeb;
+    --warn-text: #b45309;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #111827;
+      --card: #1f2937;
+      --text: #f3f4f6;
+      --sub: #9ca3af;
+      --accent: #3b82f6;
+      --accent-press: #2563eb;
+      --line: #374151;
+      --ok-bg: #064e3b;
+      --ok-text: #a7f3d0;
+      --warn-bg: #78350f;
+      --warn-text: #fde68a;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Hiragino Sans", "Noto Sans JP", sans-serif;
+    line-height: 1.6;
+  }
+  main { max-width: 480px; margin: 0 auto; padding: 16px 16px 48px; }
+  h1 { font-size: 1.3rem; margin: 8px 0 2px; }
+  .lead { color: var(--sub); font-size: 0.85rem; margin: 0 0 16px; }
+  .card {
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    padding: 16px;
+    margin-bottom: 16px;
+  }
+  label { display: block; font-size: 0.85rem; color: var(--sub); margin-bottom: 4px; }
+  input[type="text"], select {
+    width: 100%;
+    font-size: 1rem;
+    padding: 10px 12px;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    background: var(--bg);
+    color: var(--text);
+  }
+  button {
+    font-size: 1rem;
+    border: none;
+    border-radius: 10px;
+    padding: 12px 16px;
+    cursor: pointer;
+  }
+  .primary {
+    display: block;
+    width: 100%;
+    background: var(--accent);
+    color: #fff;
+    font-size: 1.15rem;
+    font-weight: bold;
+    padding: 16px;
+  }
+  .primary:active { background: var(--accent-press); }
+  .secondary {
+    background: none;
+    border: 1px solid var(--line);
+    color: var(--text);
+    font-size: 0.9rem;
+    padding: 8px 12px;
+  }
+  .status { margin-top: 12px; padding: 10px 12px; border-radius: 8px; font-size: 0.95rem; display: none; }
+  .status.ok { display: block; background: var(--ok-bg); color: var(--ok-text); }
+  .status.warn { display: block; background: var(--warn-bg); color: var(--warn-text); }
+  .manual { display: none; margin-top: 12px; }
+  .manual.show { display: block; }
+  .row-actions { display: flex; gap: 8px; margin-top: 12px; flex-wrap: wrap; }
+  table { width: 100%; border-collapse: collapse; font-size: 0.95rem; }
+  th, td { text-align: left; padding: 8px 4px; border-bottom: 1px solid var(--line); }
+  th { color: var(--sub); font-weight: normal; font-size: 0.8rem; }
+  td button { padding: 4px 10px; font-size: 0.8rem; }
+  .note { font-size: 0.78rem; color: var(--sub); }
+  textarea {
+    width: 100%; height: 120px; margin-top: 8px;
+    border: 1px solid var(--line); border-radius: 8px;
+    background: var(--bg); color: var(--text); font-size: 0.85rem;
+    display: none;
+  }
+  textarea.show { display: block; }
+</style>
+</head>
+<body>
+<main>
+  <h1>出勤チェックイン(β)</h1>
+  <p class="lead">出勤したら1タップ。位置情報から稼動店舗を自動判定して端末に記録します。</p>
+
+  <section class="card">
+    <label for="name">氏名(この端末に保存されます)</label>
+    <input type="text" id="name" placeholder="例: 源川 裕斗" autocomplete="name">
+  </section>
+
+  <section class="card">
+    <button class="primary" id="checkinBtn">📍 出勤チェックイン</button>
+    <div class="status" id="status"></div>
+    <div class="manual" id="manual">
+      <label for="manualStore">店舗を選んで手動で記録:</label>
+      <select id="manualStore"></select>
+      <div class="row-actions">
+        <button class="secondary" id="manualBtn">この店舗で記録する</button>
+      </div>
+    </div>
+  </section>
+
+  <section class="card">
+    <h2 style="font-size:1rem; margin:0 0 8px;">記録一覧</h2>
+    <div class="row-actions" style="margin:0 0 12px;">
+      <button class="secondary" id="copyThisMonth">今月分をコピー</button>
+      <button class="secondary" id="copyLastMonth">先月分をコピー</button>
+    </div>
+    <table>
+      <thead><tr><th>日付</th><th>店舗</th><th>判定</th><th></th></tr></thead>
+      <tbody id="logBody"></tbody>
+    </table>
+    <textarea id="fallbackArea" readonly></textarea>
+    <p class="note">コピーした内容(日付・氏名・店舗のタブ区切り)は、管理シートの「稼動記録」にそのまま貼り付けられます。</p>
+  </section>
+
+  <section class="card">
+    <p class="note">
+      🔒 プライバシー: 位置情報はチェックインボタンを押した瞬間に1回だけ取得し、店舗の判定にのみ使います。
+      緯度・経度は保存も送信もしません。記録(日付・店舗名・氏名)はこの端末の中にだけ保存されます。
+    </p>
+  </section>
+</main>
+
+<script>
+"use strict";
+
+// 店舗リスト(座標は最寄り駅の仮の値。実際の店舗の場所に合わせて要修正)
+// radiusM: この距離(メートル)以内なら、その店舗にいると判定する
+var STORES = [
+  { name: "元住吉",        lat: 35.5636, lng: 139.6544, radiusM: 600 },
+  { name: "大和",          lat: 35.4876, lng: 139.4617, radiusM: 600 },
+  { name: "南林間",        lat: 35.5030, lng: 139.4552, radiusM: 600 },
+  { name: "ジョイナス横浜", lat: 35.4660, lng: 139.6220, radiusM: 600 },
+  { name: "橋本",          lat: 35.5949, lng: 139.3450, radiusM: 600 },
+  { name: "武蔵新城",      lat: 35.5871, lng: 139.6533, radiusM: 600 },
+  { name: "本社",          lat: 35.4660, lng: 139.6220, radiusM: 600 }
+];
+
+var KEY_NAME = "checkin.name";
+var KEY_LOGS = "checkin.logs"; // [{date:"2026/09/05", store:"大和", method:"GPS"|"手動"}]
+
+var nameInput = document.getElementById("name");
+var statusEl = document.getElementById("status");
+var manualEl = document.getElementById("manual");
+var manualStore = document.getElementById("manualStore");
+var logBody = document.getElementById("logBody");
+var fallbackArea = document.getElementById("fallbackArea");
+
+function loadLogs() {
+  try { return JSON.parse(localStorage.getItem(KEY_LOGS)) || []; }
+  catch (e) { return []; }
+}
+function saveLogs(logs) {
+  try { localStorage.setItem(KEY_LOGS, JSON.stringify(logs)); }
+  catch (e) { showStatus("warn", "端末への保存に失敗しました。プライベートモードでは使えません。"); }
+}
+function todayStr() {
+  var d = new Date();
+  return d.getFullYear() + "/" + pad2(d.getMonth() + 1) + "/" + pad2(d.getDate());
+}
+function pad2(n) { return ("0" + n).slice(-2); }
+
+function showStatus(kind, msg) {
+  statusEl.className = "status " + kind;
+  statusEl.textContent = msg;
+}
+
+// 2点間の距離(メートル)。ハバサイン公式
+function distanceM(lat1, lng1, lat2, lng2) {
+  var R = 6371000;
+  var toRad = function (deg) { return deg * Math.PI / 180; };
+  var dLat = toRad(lat2 - lat1);
+  var dLng = toRad(lng2 - lng1);
+  var a = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+    Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) *
+    Math.sin(dLng / 2) * Math.sin(dLng / 2);
+  return 2 * R * Math.asin(Math.sqrt(a));
+}
+
+function addLog(store, method) {
+  var name = nameInput.value.trim();
+  if (!name) {
+    showStatus("warn", "先に氏名を入力してください。");
+    return;
+  }
+  var date = todayStr();
+  var logs = loadLogs();
+  var dup = logs.some(function (l) { return l.date === date && l.store === store; });
+  if (dup) {
+    showStatus("warn", date + " の「" + store + "」はすでに記録済みです。");
+    return;
+  }
+  logs.push({ date: date, store: store, method: method });
+  saveLogs(logs);
+  renderLogs();
+  showStatus("ok", "✅ " + date + " 「" + store + "」で記録しました(" + method + ")。");
+  manualEl.className = "manual";
+}
+
+document.getElementById("checkinBtn").addEventListener("click", function () {
+  if (!nameInput.value.trim()) {
+    showStatus("warn", "先に氏名を入力してください。");
+    return;
+  }
+  if (!navigator.geolocation) {
+    showStatus("warn", "この端末では位置情報が使えません。下から手動で選んでください。");
+    manualEl.className = "manual show";
+    return;
+  }
+  showStatus("ok", "位置情報を取得しています…");
+  navigator.geolocation.getCurrentPosition(function (pos) {
+    var lat = pos.coords.latitude;
+    var lng = pos.coords.longitude;
+    var best = null;
+    STORES.forEach(function (s) {
+      var d = distanceM(lat, lng, s.lat, s.lng);
+      if (!best || d < best.d) best = { store: s, d: d };
+    });
+    // 座標はここで使い捨て。保存しない
+    if (best && best.d <= best.store.radiusM) {
+      addLog(best.store.name, "GPS");
+    } else {
+      var near = best ? "(いちばん近いのは「" + best.store.name + "」約" + Math.round(best.d / 100) / 10 + "km)" : "";
+      showStatus("warn", "登録済みの店舗の近くではないようです" + near + "。下から手動で選んでください。");
+      manualEl.className = "manual show";
+    }
+  }, function () {
+    showStatus("warn", "位置情報を取得できませんでした(許可されていない可能性)。下から手動で選んでください。");
+    manualEl.className = "manual show";
+  }, { enableHighAccuracy: true, timeout: 10000, maximumAge: 60000 });
+});
+
+document.getElementById("manualBtn").addEventListener("click", function () {
+  addLog(manualStore.value, "手動");
+});
+
+function renderLogs() {
+  var logs = loadLogs().slice().sort(function (a, b) { return a.date < b.date ? 1 : -1; });
+  logBody.innerHTML = "";
+  logs.forEach(function (l) {
+    var tr = document.createElement("tr");
+    [l.date, l.store, l.method].forEach(function (v) {
+      var td = document.createElement("td");
+      td.textContent = v;
+      tr.appendChild(td);
+    });
+    var tdBtn = document.createElement("td");
+    var btn = document.createElement("button");
+    btn.className = "secondary";
+    btn.textContent = "削除";
+    btn.addEventListener("click", function () {
+      var rest = loadLogs().filter(function (x) {
+        return !(x.date === l.date && x.store === l.store && x.method === l.method);
+      });
+      saveLogs(rest);
+      renderLogs();
+    });
+    tdBtn.appendChild(btn);
+    tr.appendChild(tdBtn);
+    logBody.appendChild(tr);
+  });
+}
+
+function copyMonth(offset) {
+  var name = nameInput.value.trim();
+  if (!name) {
+    showStatus("warn", "先に氏名を入力してください。");
+    return;
+  }
+  var d = new Date();
+  d.setDate(1);
+  d.setMonth(d.getMonth() + offset);
+  var prefix = d.getFullYear() + "/" + pad2(d.getMonth() + 1) + "/";
+  var lines = loadLogs()
+    .filter(function (l) { return l.date.indexOf(prefix) === 0; })
+    .sort(function (a, b) { return a.date < b.date ? -1 : 1; })
+    .map(function (l) { return l.date + "\t" + name + "\t" + l.store; });
+  if (lines.length === 0) {
+    showStatus("warn", "その月の記録がありません。");
+    return;
+  }
+  var text = lines.join("\n");
+  var done = function () { showStatus("ok", lines.length + " 件をコピーしました。管理シートの「稼動記録」に貼り付けてください。"); };
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(text).then(done, function () { showFallback(text); });
+  } else {
+    showFallback(text);
+  }
+}
+function showFallback(text) {
+  fallbackArea.value = text;
+  fallbackArea.className = "show";
+  fallbackArea.select();
+  showStatus("warn", "自動コピーできなかったので、下の欄を長押しでコピーしてください。");
+}
+
+document.getElementById("copyThisMonth").addEventListener("click", function () { copyMonth(0); });
+document.getElementById("copyLastMonth").addEventListener("click", function () { copyMonth(-1); });
+
+// 初期化
+nameInput.value = localStorage.getItem(KEY_NAME) || "";
+nameInput.addEventListener("change", function () {
+  try { localStorage.setItem(KEY_NAME, nameInput.value.trim()); } catch (e) {}
+});
+STORES.forEach(function (s) {
+  var opt = document.createElement("option");
+  opt.value = s.name;
+  opt.textContent = s.name;
+  manualStore.appendChild(opt);
+});
+renderLogs();
+</script>
+</body>
+</html>
