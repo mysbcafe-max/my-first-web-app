@@ -177,8 +177,10 @@
             <small>スタッフごとに個別に変えられます</small>
           </label>
           <fieldset class="form-grid__full">
-            <legend>定休日(曜日)</legend>
-            <div class="check-row" id="store-closed-weekdays"></div>
+            <legend>定休日</legend>
+            <p class="help">「毎週」にチェックを入れるとその曜日は毎週休みです。「第1」〜「第5」「最終」を使うと、第1水曜だけ休み、といった設定ができます。</p>
+            <div class="table-wrap"><table class="closed-grid" id="store-closed-grid"></table></div>
+            <p class="help" id="closed-preview"></p>
           </fieldset>
           <div class="form-grid__full">
             <span class="field-label">臨時休業日</span>

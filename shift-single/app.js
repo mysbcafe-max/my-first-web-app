@@ -85,6 +85,7 @@
         periodStart: period.start,
         periodEnd: period.end,
         closedWeekdays: [],
+        closedRules: [],
         closedDates: [],
         useHolidays: true,
         autoRelax: true,
@@ -557,21 +558,7 @@
     form.elements.dayMinCountWeekend.value = data.store.dayMinCountWeekend === null || data.store.dayMinCountWeekend === undefined
       ? '' : data.store.dayMinCountWeekend;
 
-    const box = $('#store-closed-weekdays');
-    box.textContent = '';
-    WEEKDAYS.forEach(function (label, i) {
-      const input = el('input', {
-        type: 'checkbox', value: String(i),
-        checked: (data.store.closedWeekdays || []).indexOf(i) >= 0 ? true : null,
-        onchange: function () {
-          const list = (data.store.closedWeekdays || []).filter(function (w) { return w !== i; });
-          if (input.checked) list.push(i);
-          data.store.closedWeekdays = list.sort(function (a, b) { return a - b; });
-          save();
-        },
-      });
-      box.appendChild(el('label', {}, [input, label]));
-    });
+    renderClosedGrid();
 
     renderClosedDates();
     renderBusyDates();
@@ -614,6 +601,97 @@
     });
   }
 
+  const CLOSED_COLUMNS = [
+    { key: 'all', label: '毎週' },
+    { key: 1, label: '第1' },
+    { key: 2, label: '第2' },
+    { key: 3, label: '第3' },
+    { key: 4, label: '第4' },
+    { key: 5, label: '第5' },
+    { key: 'last', label: '最終' },
+  ];
+
+  function hasRule(weekday, week) {
+    return (data.store.closedRules || []).some(function (r) {
+      return r.weekday === weekday && r.week === week;
+    });
+  }
+
+  function setRule(weekday, week, on) {
+    const rules = (data.store.closedRules || []).filter(function (r) {
+      return !(r.weekday === weekday && r.week === week);
+    });
+    if (on) rules.push({ weekday: weekday, week: week });
+    data.store.closedRules = rules;
+  }
+
+  // 曜日 × 第何週 の定休日グリッド
+  function renderClosedGrid() {
+    const table = $('#store-closed-grid');
+    if (!table) return;
+    table.textContent = '';
+    table.appendChild(el('thead', {}, el('tr', {},
+      [el('th', { text: '曜日' })].concat(CLOSED_COLUMNS.map(function (c) {
+        return el('th', { class: 'num', text: c.label });
+      })))));
+
+    const body = el('tbody');
+    WEEKDAYS.forEach(function (label, wd) {
+      const everyWeek = (data.store.closedWeekdays || []).indexOf(wd) >= 0;
+      const cells = CLOSED_COLUMNS.map(function (col) {
+        const isAll = col.key === 'all';
+        const input = el('input', {
+          type: 'checkbox',
+          checked: (isAll ? everyWeek : hasRule(wd, col.key)) ? true : null,
+          disabled: (!isAll && everyWeek) ? true : null,
+          'aria-label': label + '曜 ' + col.label,
+          onchange: function () {
+            if (isAll) {
+              const list = (data.store.closedWeekdays || []).filter(function (w) { return w !== wd; });
+              if (input.checked) {
+                list.push(wd);
+                // 毎週にしたら、その曜日の第○指定は不要なので消す
+                data.store.closedRules = (data.store.closedRules || []).filter(function (r) {
+                  return r.weekday !== wd;
+                });
+              }
+              data.store.closedWeekdays = list.sort(function (a, b) { return a - b; });
+            } else {
+              setRule(wd, col.key, input.checked);
+            }
+            save();
+            renderClosedGrid();
+            renderClosedPreview();
+          },
+        });
+        return el('td', { class: 'num' }, input);
+      });
+      body.appendChild(el('tr', {}, [el('th', { text: label })].concat(cells)));
+    });
+    table.appendChild(body);
+    renderClosedPreview();
+  }
+
+  // この期間で実際に休みになる日を出す
+  function renderClosedPreview() {
+    const box = $('#closed-preview');
+    if (!box) return;
+    const dates = S.eachDate(data.store.periodStart, data.store.periodEnd);
+    const store = {
+      closedWeekdays: data.store.closedWeekdays || [],
+      closedRules: data.store.closedRules || [],
+      closedDates: data.store.closedDates || [],
+    };
+    const closed = dates.filter(function (d) { return S.isClosedDate(store, d); });
+    if (!closed.length) {
+      box.textContent = 'この期間に休みはありません。';
+      return;
+    }
+    box.textContent = 'この期間の休み(' + closed.length + '日): ' + closed.map(function (d) {
+      return d.slice(5).replace('-', '/') + '(' + WEEKDAYS[S.weekdayOf(d)] + ')';
+    }).join('、');
+  }
+
   function renderClosedDates() {
     const box = $('#store-closed-dates');
     box.textContent = '';
@@ -624,7 +702,7 @@
           type: 'button', 'aria-label': date + ' を削除', text: '×',
           onclick: function () {
             data.store.closedDates = data.store.closedDates.filter(function (d) { return d !== date; });
-            save(); renderClosedDates();
+            save(); renderClosedDates(); renderClosedPreview();
           },
         }),
       ]));
@@ -1109,6 +1187,9 @@
       if (name === 'useHolidays' || name === 'periodStart' || name === 'periodEnd') {
         renderHolidayPreview();
       }
+      if (name === 'periodStart' || name === 'periodEnd') {
+        renderClosedPreview();
+      }
     }
     $('#form-store').addEventListener('input', onStoreFieldChange);
     $('#form-store').addEventListener('change', onStoreFieldChange);
@@ -1133,6 +1214,7 @@
       input.value = '';
       save();
       renderClosedDates();
+      renderClosedPreview();
     });
     $('#btn-add-role').addEventListener('click', function () {
       const id = nextId('role', data.store.roles);

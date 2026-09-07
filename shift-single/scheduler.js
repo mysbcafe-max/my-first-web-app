@@ -216,6 +216,43 @@
     return Array.from(new Set(out)).sort((a, b) => a - b);
   }
 
+  /*
+   * 定休日のルール: { weekday: 0〜6, week: 1〜5 または 'last' }
+   * 例) 第1水曜 → { weekday: 3, week: 1 } / 最終月曜 → { weekday: 1, week: 'last' }
+   */
+  function normalizeClosedRules(v) {
+    if (!Array.isArray(v)) return [];
+    const seen = {};
+    const out = [];
+    v.forEach((raw) => {
+      const src = raw || {};
+      const weekday = toInt(src.weekday, -1);
+      if (weekday < 0 || weekday > 6) return;
+      const week = src.week === 'last' ? 'last' : toInt(src.week, 0);
+      if (week !== 'last' && (week < 1 || week > 5)) return;
+      const key = weekday + '/' + week;
+      if (seen[key]) return;
+      seen[key] = true;
+      out.push({ weekday: weekday, week: week });
+    });
+    return out;
+  }
+
+  // その月で「その曜日の何回目」か(1 始まり)
+  function weekdayOccurrence(dateStr) {
+    const d = Number(String(dateStr).slice(8, 10));
+    return Math.floor((d - 1) / 7) + 1;
+  }
+
+  // その月で最後のその曜日か
+  function isLastWeekdayOfMonth(dateStr) {
+    const y = Number(String(dateStr).slice(0, 4));
+    const m = Number(String(dateStr).slice(5, 7));
+    const d = Number(String(dateStr).slice(8, 10));
+    const lastDay = new Date(Date.UTC(y, m, 0)).getUTCDate();
+    return d + 7 > lastDay;
+  }
+
   function normalizeDates(v) {
     if (!Array.isArray(v)) return [];
     return uniqSorted(v.map((x) => String(x).trim()).filter(isValidDate));
@@ -281,6 +318,7 @@
       periodStart: String(src.periodStart || ''),
       periodEnd: String(src.periodEnd || ''),
       closedWeekdays: normalizeWeekdays(src.closedWeekdays, []),
+      closedRules: normalizeClosedRules(src.closedRules),
       closedDates: normalizeDates(src.closedDates),
       // 1日の合計カウントの下限(空なら使わない)
       dayMinCount: (src.dayMinCount === '' || src.dayMinCount === null || src.dayMinCount === undefined)
@@ -344,6 +382,19 @@
   function isWeekend(date) {
     const wd = weekdayOf(date);
     return wd === 0 || wd === 6;
+  }
+
+  // その日が定休日か(毎週の曜日 / 第○曜日 / 臨時休業日)
+  function isClosedDate(store, date) {
+    const wd = weekdayOf(date);
+    if (store.closedWeekdays.indexOf(wd) >= 0) return true;
+    if (store.closedDates.indexOf(date) >= 0) return true;
+    return store.closedRules.some((rule) => {
+      if (rule.weekday !== wd) return false;
+      return rule.week === 'last'
+        ? isLastWeekdayOfMonth(date)
+        : weekdayOccurrence(date) === rule.week;
+    });
   }
 
   function holidayNameOf(date) {
@@ -578,7 +629,7 @@
     function buildDays(units) {
       days = allDates.map((date) => {
         const wd = weekdayOf(date);
-        const closed = store.closedWeekdays.indexOf(wd) >= 0 || store.closedDates.indexOf(date) >= 0;
+        const closed = isClosedDate(store, date);
         const cells = closed ? [] : slots
           .filter((slot) => slot.weekdays.indexOf(wd) >= 0)
           .map((slot) => ({
@@ -1589,6 +1640,9 @@
     effectiveSpan: effectiveSpan,
     isValidTime: isValidTime,
     holidayNameOf: holidayNameOf,
+    isClosedDate: isClosedDate,
+    weekdayOccurrence: weekdayOccurrence,
+    isLastWeekdayOfMonth: isLastWeekdayOfMonth,
     formatCount: formatCount,
     weekdayOf: weekdayOf,
     isValidDate: isValidDate,
