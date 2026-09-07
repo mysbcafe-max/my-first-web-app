@@ -87,6 +87,7 @@
         closedWeekdays: [],
         closedDates: [],
         useHolidays: true,
+        autoRelax: true,
         busyDates: [],
         dayMinCount: null,
         dayMinCountWeekend: null,
@@ -550,6 +551,7 @@
     form.elements.periodEnd.value = data.store.periodEnd || '';
     form.elements.dayCountMode.value = data.store.dayCountMode || 'work';
     form.elements.useHolidays.checked = data.store.useHolidays !== false;
+    form.elements.autoRelax.checked = data.store.autoRelax !== false;
     form.elements.dayMinCount.value = data.store.dayMinCount === null || data.store.dayMinCount === undefined
       ? '' : data.store.dayMinCount;
     form.elements.dayMinCountWeekend.value = data.store.dayMinCountWeekend === null || data.store.dayMinCountWeekend === undefined
@@ -900,6 +902,7 @@
 
   function renderWarnings(box, result) {
     const groups = {
+      relaxed: { title: '人手にあわせた調整', cls: 'notice-info', items: [] },
       dayShortage: { title: '1日の合計カウントが足りない日', cls: 'notice-error', items: [] },
       shortage: { title: '人数・カウントが足りない枠', cls: 'notice-error', items: [] },
       close: { title: '締め作業の担当がいない枠', cls: 'notice-error', items: [] },

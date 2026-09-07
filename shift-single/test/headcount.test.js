@@ -91,8 +91,8 @@ test('人数カウントを手で指定できる', () => {
   });
 });
 
-test('カウントが足りないときは不足として警告する', () => {
-  const store = makeStore({ slots: [
+test('カウントが足りないときは不足として警告する(自動調整オフ)', () => {
+  const store = makeStore({ autoRelax: false, slots: [
     { id: 'c', name: 'C', start: '09:30', end: '18:30', required: 4.5, requiredByRole: {}, leaderLevel: 0 },
   ] });
   const r = run(store, [full('a'), short('s')]);
@@ -215,4 +215,98 @@ test('au ショップのサンプルは平日4.5・土日祝5で組まれる', (
   // 時短スタッフが 0.5 として数えられている
   const hasHalf = r.days.some((day) => day.cells.some((c) => c.assigned.some((a) => a.count === 0.5)));
   assert.ok(hasHalf, '時短スタッフが 0.5 カウントになっていない');
+});
+
+// ---------------- 人手が足りないときの自動調整 ----------------
+
+function relaxStore(over) {
+  return Object.assign({
+    name: 'テスト店',
+    periodStart: '2026-10-01',
+    periodEnd: '2026-10-31',
+    closedWeekdays: [],
+    closedDates: [],
+    roles: [],
+    dayMinCount: 4.5,
+    dayMinCountWeekend: 5,
+    slots: [
+      { id: 'c', name: 'C', start: '09:30', end: '18:30', required: 2, requiredByRole: {}, leaderLevel: 0 },
+      { id: 'b', name: 'B', start: '10:30', end: '19:30', required: 2, requiredByRole: {}, leaderLevel: 0 },
+    ],
+  }, over || {});
+}
+
+// 少し人手が足りない状態(公休9日の社員5人 = 110日ぶん、必要は約140)
+function tightStaff() {
+  const out = [];
+  for (let i = 0; i < 5; i += 1) {
+    out.push({ id: 'e' + i, name: 'E' + i, level: 3, dayCountMode: 'holiday', holidayDays: 9 });
+  }
+  return out;
+}
+
+test('足りない日が出るなら平日の下限を自動で下げる', () => {
+  const r = run(relaxStore(), tightStaff());
+  assert.strictEqual(r.relaxed.applied, true, '自動調整が働いていない');
+  assert.ok(r.relaxed.shed > 0);
+  // 平日の下限が下がっていること
+  const weekdayMins = r.days.filter((d) => !d.busy).map((d) => d.dayRequired);
+  assert.ok(Math.min.apply(null, weekdayMins) < 4.5, '平日の下限が下がっていない');
+  assert.ok(r.warnings.some((w) => w.type === 'relaxed'));
+});
+
+test('土日祝の下限は下げない', () => {
+  const r = run(relaxStore(), tightStaff());
+  r.days.filter((d) => d.busy).forEach((d) => {
+    assert.strictEqual(d.dayRequired, 5, d.date + ' の土日祝が下がっている');
+  });
+});
+
+test('自動調整をオフにすると設定どおりのまま(不足はそのまま出る)', () => {
+  const r = run(relaxStore({ autoRelax: false }), tightStaff());
+  assert.strictEqual(r.relaxed.applied, false);
+  r.days.forEach((d) => {
+    assert.strictEqual(d.dayRequired, d.busy ? 5 : 4.5, d.date);
+  });
+  assert.ok(r.warnings.some((w) => w.type === 'dayShortage'), '不足が出ていない');
+});
+
+test('自動調整の結果、足りない日が減る', () => {
+  const staff = tightStaff();
+  const withRelax = run(relaxStore(), staff);
+  const without = run(relaxStore({ autoRelax: false }), staff);
+  const countShort = (r) => r.days.filter((d) => d.dayShort > 0).length;
+  assert.ok(countShort(withRelax) < countShort(without),
+    '調整しても足りない日が減っていない: ' + countShort(withRelax) + ' vs ' + countShort(without));
+});
+
+test('必要量を満たしたあと、残っている出勤日数は使い切る', () => {
+  const r = run(relaxStore(), tightStaff());
+  r.staffSummary.forEach((row) => {
+    assert.strictEqual(row.assignedDays, row.targetDays,
+      row.name + ' の出勤日数が ' + row.assignedDays + '/' + row.targetDays);
+  });
+});
+
+test('余りを配っても、設定どおりの必要量は超えない', () => {
+  // 人が余っている状態(必要 2+2 に対して 10 人が毎日入れる)
+  const store = relaxStore({ dayMinCount: null, dayMinCountWeekend: null });
+  const staff = [];
+  for (let i = 0; i < 10; i += 1) staff.push({ id: 's' + i, name: 'S' + i, level: 3, targetDays: 31 });
+  const r = run(store, staff);
+  r.days.forEach((day) => {
+    assert.strictEqual(day.assignedCount, 4, day.date + ': ' + day.assignedCount);
+  });
+});
+
+test('au ショップのサンプルは足りない日なしで組める', () => {
+  ['2026-09-05', '2026-10-05', '2026-11-05'].forEach((ref) => {
+    const d = S.sampleData('aushop', ref);
+    const r = S.generate({ store: d.store, staff: d.staff });
+    const shortDays = r.days.filter((day) => day.dayShort > 0 || day.cells.some((c) => c.shortCount > 0));
+    assert.strictEqual(shortDays.length, 0, ref + ' に足りない日がある: ' + shortDays.map((x) => x.date).join(','));
+    // 出勤日数もほぼ使い切れている(設定どおりの必要量に収まらない分だけは残る)
+    const lost = r.staffSummary.reduce((n, row) => n + Math.max(0, row.targetDays - row.assignedDays), 0);
+    assert.ok(lost <= 1, ref + ' で使い切れなかった出勤日数が ' + lost + '日');
+  });
 });

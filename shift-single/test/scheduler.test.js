@@ -318,8 +318,9 @@ test('枠を設ける曜日を絞れる', () => {
 
 // ---------------- 不足の警告 ----------------
 
-test('人数が足りないときは不足として警告に出す', () => {
+test('人数が足りないときは不足として警告に出す(自動調整オフ)', () => {
   const store = makeStore({
+    autoRelax: false,
     slots: [{ id: 'a', name: '早番', required: 3, requiredByRole: {}, leaderLevel: 0 }],
   });
   const staff = [makeStaff({ id: 'a', name: 'A' })];

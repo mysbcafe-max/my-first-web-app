@@ -287,6 +287,8 @@
         ? null : Math.max(0, toNum(src.dayMinCount, 0)),
       dayMinCountWeekend: (src.dayMinCountWeekend === '' || src.dayMinCountWeekend === null || src.dayMinCountWeekend === undefined)
         ? null : Math.max(0, toNum(src.dayMinCountWeekend, 0)),
+      // 人手が足りないときに平日の必要量を自動で下げるか
+      autoRelax: src.autoRelax === undefined ? true : !!src.autoRelax,
       // 祝日を土日と同じ「多めに配置する日」として扱うか
       useHolidays: src.useHolidays === undefined ? true : !!src.useHolidays,
       // 土日祝のほかに、多めに配置したい日(セール日など)
@@ -514,53 +516,123 @@
       return s.roles.indexOf(roleId) >= 0;
     }
 
+    // 平日の必要量を relax カウントぶん下げる(土日祝は下げない)
+    function relaxDay(day, relax) {
+      if (!relax || day.busy || day.closed) return;
+      let need = relax;
+      const slotSum = () => round1(day.cells.reduce((n, c) => n + c.required, 0));
+      // まず「1日の合計カウント」を下げる
+      if (day.dayRequired > slotSum()) {
+        const cut = Math.min(need, round1(day.dayRequired - slotSum()));
+        day.dayRequired = round1(day.dayRequired - cut);
+        need = round1(need - cut);
+      }
+      // それでも足りなければ、枠ごとの必要カウントを削る(枠自体は残す)
+      if (need > 0.001) {
+        day.cells.slice().sort((a, b) => b.required - a.required).forEach((c) => {
+          if (need <= 0.001) return;
+          const room = Math.max(0, round1(c.required - 0.5));
+          const cut = Math.floor(Math.min(need, room) * 2) / 2;
+          if (cut > 0) {
+            c.required = round1(c.required - cut);
+            need = round1(need - cut);
+          }
+        });
+        day.dayRequired = Math.min(day.dayRequired, slotSum());
+      }
+    }
+
+    // 平日をこれ以上薄くできるか
+    function canRelaxMore() {
+      return openDays.some((d) => !d.busy
+        && (d.dayRequired > round1(d.cells.reduce((n, c) => n + c.required, 0))
+          || d.cells.some((c) => c.required > 0.5)));
+    }
+
+    let days = [];
+    let openDays = [];
+    let state = {};
+
+    /*
+     * units 個の「0.5 カウント」を平日に均等に配る。
+     * 必要な分だけ薄くしたいので、全日を一律に下げるのではなく、
+     * 日数で割ってとびとびに適用する。
+     */
+    function relaxPlan(weekdayDates, units) {
+      const plan = {};
+      const n = weekdayDates.length;
+      if (!n || units <= 0) return plan;
+      const base = Math.floor(units / n);
+      const extra = units % n;
+      weekdayDates.forEach((date, i) => { plan[date] = 0.5 * base; });
+      for (let k = 0; k < extra; k += 1) {
+        const idx = Math.min(n - 1, Math.round((k * n) / extra));
+        plan[weekdayDates[idx]] = round1((plan[weekdayDates[idx]] || 0) + 0.5);
+      }
+      return plan;
+    }
+
+    let weekdayDates = [];
+
     // 日ごとの枠(cells)を作る
-    const days = allDates.map((date) => {
-      const wd = weekdayOf(date);
-      const closed = store.closedWeekdays.indexOf(wd) >= 0 || store.closedDates.indexOf(date) >= 0;
-      const cells = closed ? [] : slots
-        .filter((slot) => slot.weekdays.indexOf(wd) >= 0)
-        .map((slot) => ({
-          slot: slot,
-          required: requiredOf(slot, date, store),
-          assigned: [],
-          unfilled: [],
+    function buildDays(units) {
+      days = allDates.map((date) => {
+        const wd = weekdayOf(date);
+        const closed = store.closedWeekdays.indexOf(wd) >= 0 || store.closedDates.indexOf(date) >= 0;
+        const cells = closed ? [] : slots
+          .filter((slot) => slot.weekdays.indexOf(wd) >= 0)
+          .map((slot) => ({
+            slot: slot,
+            required: requiredOf(slot, date, store),
+            baseRequired: requiredOf(slot, date, store),
+            assigned: [],
+            unfilled: [],
+            assignedCount: 0,
+            shortCount: 0,
+            shortReasons: {},
+            noLeader: false,
+            noCloser: false,
+            noOpener: false,
+          }))
+          .filter((cell) => cell.required > 0);
+        return {
+          date: date,
+          weekday: wd,
+          weekdayLabel: WEEKDAY_LABELS[wd],
+          holidayName: store.useHolidays ? holidayNameOf(date) : '',
+          busy: isBusyDay(store, date),
+          closed: closed,
+          dayRequired: closed ? 0 : requiredDayCount(store, date),
+          baseDayRequired: closed ? 0 : requiredDayCount(store, date),
           assignedCount: 0,
-          shortCount: 0,
-          shortReasons: {},
-          noLeader: false,
-          noCloser: false,
-          noOpener: false,
-        }))
-        .filter((cell) => cell.required > 0);
-      return {
-        date: date,
-        weekday: wd,
-        weekdayLabel: WEEKDAY_LABELS[wd],
-        holidayName: store.useHolidays ? holidayNameOf(date) : '',
-        busy: isBusyDay(store, date),
-        closed: closed,
-        dayRequired: 0,
-        assignedCount: 0,
-        dayShort: 0,
-        cells: cells,
-      };
-    });
+          dayShort: 0,
+          cells: cells,
+        };
+      });
+      openDays = days.filter((d) => !d.closed && d.cells.length);
+      weekdayDates = openDays.filter((d) => !d.busy).map((d) => d.date);
+      const plan = relaxPlan(weekdayDates, units || 0);
+      days.forEach((d) => relaxDay(d, plan[d.date] || 0));
+      openDays = days.filter((d) => !d.closed && d.cells.length);
+    }
 
-    const openDays = days.filter((d) => !d.closed && d.cells.length);
-
-    // スタッフごとの状態
-    const state = {};
-    staff.forEach((s) => {
-      state[s.id] = {
-        assigned: 0,
-        dates: new Set(),
-        slotCount: {},
-        roleCount: {},
-        passed: 0,        // 「入れたのに入らなかった日」= 残り機会の目減り
-        availableTotal: 0,
-      };
-    });
+    // スタッフごとの状態を初期化する
+    function initState() {
+      state = {};
+      staff.forEach((s) => {
+        state[s.id] = {
+          assigned: 0,
+          dates: new Set(),
+          slotCount: {},
+          roleCount: {},
+          passed: 0,        // 「入れたのに入らなかった日」= 残り機会の目減り
+          availableTotal: 0,
+        };
+      });
+      openDays.forEach((day) => {
+        staff.forEach((s) => { if (couldWorkDay(s, day)) state[s.id].availableTotal += 1; });
+      });
+    }
 
     // その日にそのスタッフが働ける枠があるか(人数上限などは見ない、素の可否)
     function couldWorkDay(s, day) {
@@ -569,10 +641,6 @@
       if (s.daysOff.indexOf(day.date) >= 0) return false;
       return day.cells.some((cell) => s.availableSlots.indexOf(cell.slot.id) >= 0);
     }
-
-    openDays.forEach((day) => {
-      staff.forEach((s) => { if (couldWorkDay(s, day)) state[s.id].availableTotal += 1; });
-    });
 
     // 連勤(date を足したときの連続日数)
     function runBefore(s, date) {
@@ -938,20 +1006,27 @@
     }
 
     function dayDifficulty(day) {
-      const required = day.cells.reduce((n, c) => n + c.required, 0);
+      // 1日の合計カウントの下限も込みで「その日の必要量」を見る。
+      // これを見ないと、土日祝(下限が高い日)が後回しになって人が足りなくなる。
+      const required = Math.max(
+        day.cells.reduce((n, c) => n + c.required, 0),
+        day.dayRequired || 0
+      );
       const cands = staff.filter((s) => couldWorkDay(s, day) && s.targetDays > 0).length;
       return cands === 0 ? Infinity : required / cands;
     }
 
-    // 埋めにくい日から順に処理する(候補に対して必要人数が多い日 = 土日など)
-    const order = openDays.slice().sort((a, b) => {
-      const da = dayDifficulty(a);
-      const db = dayDifficulty(b);
-      if (da !== db) return db - da;
-      return a.date < b.date ? -1 : 1;
-    });
+    // 1 回ぶんの割り当て
+    function runPass() {
+      // 埋めにくい日から順に処理する(候補に対して必要人数が多い日 = 土日など)
+      const order = openDays.slice().sort((a, b) => {
+        const da = dayDifficulty(a);
+        const db = dayDifficulty(b);
+        if (da !== db) return db - da;
+        return a.date < b.date ? -1 : 1;
+      });
 
-    order.forEach((day) => {
+      order.forEach((day) => {
       // 候補が少ない枠から埋める
       const cells = day.cells.slice().sort((a, b) => {
         const ca = candidatesFor(a, day.date, null, null).length / Math.max(1, a.required);
@@ -963,7 +1038,6 @@
       improveDay(day);
 
       // 枠ごとの人数を満たしたうえで、1日の合計カウントが足りなければ足す
-      day.dayRequired = requiredDayCount(store, day.date);
       if (day.dayRequired > 0) {
         let guard = 0;
         while (dayCountOf(day) < day.dayRequired - 0.001 && guard < 60) {
@@ -983,21 +1057,137 @@
         }
       }
 
-      day.cells.forEach((cell) => {
-        cell.assignedCount = countOf(cell);
-        cell.shortCount = Math.max(0, round1(cell.required - cell.assignedCount));
+        day.cells.forEach((cell) => {
+          cell.assignedCount = countOf(cell);
+          cell.shortCount = Math.max(0, round1(cell.required - cell.assignedCount));
+        });
+        day.assignedCount = dayCountOf(day);
+        day.dayShort = Math.max(0, round1(day.dayRequired - day.assignedCount));
+        // この日に入れたのに入らなかった人は、残りの機会が 1 つ減ったとみなす
+        staff.forEach((s) => {
+          if (!state[s.id].dates.has(day.date) && couldWorkDay(s, day)) state[s.id].passed += 1;
+        });
       });
-      day.assignedCount = dayCountOf(day);
-      day.dayShort = Math.max(0, round1(day.dayRequired - day.assignedCount));
-      // この日に入れたのに入らなかった人は、残りの機会が 1 つ減ったとみなす
-      staff.forEach((s) => {
-        if (!state[s.id].dates.has(day.date) && couldWorkDay(s, day)) state[s.id].passed += 1;
+    }
+
+    /*
+     * 必要量を満たしたあと、出勤日数がまだ残っている人を
+     * 人の少ない日から順に足していく。
+     * 公休や出勤日数は契約なので、余らせずに使い切る。
+     */
+    function distributeSurplus() {
+      // 配ってよい上限は「調整前の設定どおりの必要量」まで
+      function dayRoom(day) {
+        const base = Math.max(
+          day.cells.reduce((n, c) => n + c.baseRequired, 0),
+          day.baseDayRequired || 0
+        );
+        return round1(base - dayCountOf(day));
+      }
+
+      let guard = 0;
+      while (guard < 800) {
+        const remaining = staff.some((s) => state[s.id].assigned < s.targetDays);
+        if (!remaining) break;
+        const dayOrder = openDays
+          .filter((d) => dayRoom(d) > 0.001)
+          .sort((a, b) => (dayCountOf(a) - dayCountOf(b)) || (a.date < b.date ? -1 : 1));
+        let placed = false;
+        for (let i = 0; i < dayOrder.length && !placed; i += 1) {
+          const day = dayOrder[i];
+          const cells = day.cells.slice().sort((a, b) => countOf(a) - countOf(b));
+          for (let j = 0; j < cells.length && !placed; j += 1) {
+            const cands = candidatesFor(cells[j], day.date, ANY_ROLE, null);
+            if (!cands.length) continue;
+            assign(pickForGap(cands, cells[j], day.date, dayRoom(day)), cells[j], day.date, ANY_ROLE, false);
+            placed = true;
+          }
+        }
+        if (!placed) break;
+        guard += 1;
+      }
+      days.forEach((day) => {
+        day.cells.forEach((cell) => {
+          cell.assignedCount = countOf(cell);
+          cell.shortCount = Math.max(0, round1(cell.required - cell.assignedCount));
+        });
+        day.assignedCount = dayCountOf(day);
+        day.dayShort = Math.max(0, round1(day.dayRequired - day.assignedCount));
       });
-    });
+    }
+
+    // 足りない量の合計(枠のカウント不足と、1日の合計の不足)
+    function shortageScore() {
+      return round1(days.reduce((n, d) => n + d.dayShort
+        + d.cells.reduce((m, c) => m + c.shortCount, 0), 0));
+    }
+
+    /*
+     * まず設定どおりに組んでみる。足りない日が出たら、平日を 0.5 ずつ薄くして
+     * 組み直す。土日祝は薄くしない。
+     * 足りない日がなくなるか、薄くしても良くならなくなったら終わり。
+     */
+    const relax = { applied: false, units: 0, shed: 0, days: 0, before: 0, after: 0 };
+
+    buildDays(0);
+    initState();
+    runPass();
+
+    if (store.autoRelax) {
+      relax.before = shortageScore();
+      let best = relax.before;
+      let units = 0;
+      let guard = 0;
+      const maxUnits = weekdayDates.length * 4;
+      while (best > 0.001 && guard < 8 && canRelaxMore()) {
+        // 足りない量ぶんだけ薄くする(0.5 カウント × 個数)
+        const next = Math.min(maxUnits, units + Math.max(1, Math.ceil(best / 0.5)));
+        if (next === units) break;
+        buildDays(next);
+        initState();
+        runPass();
+        const score = shortageScore();
+        if (score >= best) {
+          buildDays(units);
+          initState();
+          runPass();
+          break;
+        }
+        units = next;
+        best = score;
+        guard += 1;
+      }
+      if (units > 0) {
+        relax.applied = true;
+        relax.units = units;
+        relax.shed = round1(units * 0.5);
+        relax.days = weekdayDates.length;
+        relax.after = shortageScore();
+      }
+    }
+
+    // 必要量を満たしたあと、残っている出勤日数を配る
+    distributeSurplus();
 
     // ---------------- 集計 ----------------
 
     const warnings = setupWarnings.slice();
+
+    if (relax.applied) {
+      const weekdayMins = openDays.filter((d) => !d.busy).map((d) => d.dayRequired);
+      const lo = weekdayMins.length ? Math.min.apply(null, weekdayMins) : 0;
+      const hi = weekdayMins.length ? Math.max.apply(null, weekdayMins) : 0;
+      warnings.push({
+        type: 'relaxed',
+        message: '設定どおりだと足りない日が出るため、平日の下限を一部の日で下げて全体を回しました'
+          + '(平日 ' + relax.days + '日のうち合計 ' + formatCount(relax.shed) + 'カウントぶん。'
+          + '平日の下限は ' + (lo === hi ? formatCount(lo) : formatCount(lo) + '〜' + formatCount(hi)) + ')。'
+          + '土日祝は下げていません。'
+          + (relax.after > 0.001
+            ? ' これでもまだ ' + formatCount(relax.after) + 'カウント足りない日があります。'
+            : ' これで全日まかなえています。'),
+      });
+    }
 
     days.forEach((day) => {
       if (day.dayShort > 0) {
@@ -1130,6 +1320,7 @@
       days: days,
       staffSummary: staffSummary,
       warnings: warnings,
+      relaxed: relax,
       stats: {
         openDays: openDays.length,
         closedDays: days.length - openDays.length,

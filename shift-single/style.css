@@ -215,3 +215,5 @@ tbody tr:nth-child(even) { background: #fafbfc; }
 .count-mark { color: var(--warn-ink); font-weight: 600; }
 .cell-count { color: var(--muted); font-size: 0.75rem; margin-top: 0.2rem; }
 .day-count { display: block; font-size: 0.75rem; color: var(--muted); }
+
+.notice-info { background: var(--info-bg); color: var(--info-ink); }
