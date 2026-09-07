@@ -58,6 +58,7 @@
         <div class="result__toolbar">
           <h3>生成結果 <small id="result-period"></small></h3>
           <div class="btn-group">
+            <button type="button" class="btn" id="btn-csv-grid">CSV(シフト表)</button>
             <button type="button" class="btn" id="btn-csv-date">CSV(日付別)</button>
             <button type="button" class="btn" id="btn-csv-staff">CSV(スタッフ別)</button>
             <button type="button" class="btn" id="btn-print">印刷</button>
@@ -65,7 +66,10 @@
         </div>
         <ul class="stats" id="result-stats"></ul>
         <div id="result-warnings"></div>
-        <h4>日付 × 時間帯</h4>
+        <h4>シフト表(スタッフ × 日付)</h4>
+        <div class="table-wrap"><table class="shift-grid" id="result-shift-grid"></table></div>
+        <p class="help" id="shift-grid-legend"></p>
+        <h4>内訳(日付 × 時間帯)</h4>
         <div class="table-wrap"><table class="matrix" id="result-matrix"></table></div>
         <h4>スタッフ別の集計</h4>
         <div class="table-wrap"><table class="list" id="result-staff"></table></div>
