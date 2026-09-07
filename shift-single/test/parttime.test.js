@@ -386,3 +386,93 @@ test('au ショップのサンプルでは時短スタッフが早番のみに�
   const lateSlot = r.slots.find((x) => x.requiresClose);
   assert.strictEqual(short.bySlot[lateSlot.id], undefined, '時短が締めのある枠に入っている');
 });
+
+// ---------------- リーダーの確保 ----------------
+
+test('リーダーは全日ぶん先に確保する(人手が限られていても不在にしない)', () => {
+  // リーダー(Lv4以上)は2人しかいないが、毎日2枠ぶん必要
+  const store = makeStore({
+    periodStart: '2026-10-01',
+    periodEnd: '2026-10-14',
+    slots: [
+      { id: 'c', name: 'C', start: '09:30', end: '18:30', required: 2, requiredByRole: {}, leaderLevel: 4 },
+      { id: 'b', name: 'B', start: '10:30', end: '19:30', required: 2, requiredByRole: {}, leaderLevel: 4 },
+    ],
+  });
+  const staff = [
+    makeStaff({ id: 'L1', name: 'リーダー1', level: 5, targetDays: 14 }),
+    makeStaff({ id: 'L2', name: 'リーダー2', level: 4, targetDays: 14 }),
+  ];
+  for (let i = 0; i < 4; i += 1) staff.push(makeStaff({ id: 'n' + i, name: 'N' + i, level: 2, targetDays: 14 }));
+
+  const r = run(store, staff, { maxConsecutiveDays: 0 });
+  eachCell(r, (cell, day) => {
+    assert.ok(cell.assigned.some((a) => a.level >= 4), day.date + ' ' + cell.slot.name + ' にリーダーがいない');
+    assert.strictEqual(cell.noLeader, false);
+  });
+  assert.strictEqual(r.warnings.filter((w) => w.type === 'leader').length, 0);
+});
+
+test('リーダーは候補の少ない役割に入れる(役割の穴を作らない)', () => {
+  // リーダー2人はどちらの役割もできる。カウンター専任は1人しかいない
+  const store = makeStore({
+    slots: [{ id: 'c', name: 'C', start: '09:30', end: '18:30', required: 3, requiredByRole: { r1: 1, r2: 1 }, leaderLevel: 4 }],
+  });
+  const staff = [
+    makeStaff({ id: 'L1', name: 'リーダー', level: 5, roles: ['r1', 'r2'] }),
+    makeStaff({ id: 'f1', name: 'フロア1', level: 2, roles: ['r1'] }),
+    makeStaff({ id: 'f2', name: 'フロア2', level: 2, roles: ['r1'] }),
+  ];
+  const r = run(store, staff, { maxConsecutiveDays: 0 });
+  eachCell(r, (cell, day) => {
+    assert.strictEqual(cell.unfilled.length, 0, day.date + ' に役割の不足がある');
+    // リーダーは候補が少ないカウンター側に入る
+    const leader = cell.assigned.find((a) => a.id === 'L1');
+    assert.strictEqual(leader.role, 'r2', day.date + ': リーダーが ' + leader.role + ' に入っている');
+  });
+});
+
+test('リーダーがいない枠は同じ日の入れ替えでも直す', () => {
+  const store = makeStore({
+    periodStart: '2026-10-01',
+    periodEnd: '2026-10-03',
+    slots: [
+      { id: 'c', name: 'C', start: '09:30', end: '18:30', required: 1, requiredByRole: {}, leaderLevel: 0 },
+      { id: 'b', name: 'B', start: '10:30', end: '19:30', required: 1, requiredByRole: {}, leaderLevel: 4 },
+    ],
+  });
+  const staff = [
+    makeStaff({ id: 'L', name: 'リーダー', level: 5, targetDays: 3 }),
+    makeStaff({ id: 'n', name: '一般', level: 2, targetDays: 3 }),
+  ];
+  const r = run(store, staff, { maxConsecutiveDays: 0 });
+  r.days.forEach((day) => {
+    const b = day.cells.find((c) => c.slot.id === 'b');
+    assert.ok(b.assigned.some((a) => a.level >= 4), day.date + ' の B にリーダーがいない');
+  });
+});
+
+test('リーダーになれる人が1人もいなければ警告を出す', () => {
+  const store = makeStore({
+    slots: [{ id: 'c', name: 'C', start: '09:30', end: '18:30', required: 2, requiredByRole: {}, leaderLevel: 5 }],
+  });
+  const staff = [makeStaff({ id: 'a', name: 'A', level: 2 }), makeStaff({ id: 'b', name: 'B', level: 3 })];
+  const r = run(store, staff, { maxConsecutiveDays: 0 });
+  assert.ok(r.warnings.filter((w) => w.type === 'leader').length > 0);
+  // 枠自体は埋まる
+  eachCell(r, (cell) => assert.strictEqual(cell.assigned.length, 2));
+});
+
+test('au ショップのサンプルはリーダー不在の日が出ない', () => {
+  ['2026-09-05', '2026-10-05', '2026-11-05', '2026-12-05', '2027-01-05'].forEach((ref) => {
+    const d = S.sampleData('aushop', ref);
+    const r = S.generate({ store: d.store, staff: d.staff });
+    const gaps = [];
+    r.days.forEach((day) => day.cells.forEach((cell) => {
+      if (cell.slot.leaderLevel > 0 && !cell.assigned.some((a) => a.level >= cell.slot.leaderLevel)) {
+        gaps.push(day.date + ' ' + cell.slot.name);
+      }
+    }));
+    assert.strictEqual(gaps.length, 0, ref + ' にリーダー不在: ' + gaps.join(', '));
+  });
+});
