@@ -88,6 +88,8 @@
         closedDates: [],
         useHolidays: true,
         busyDates: [],
+        dayMinCount: null,
+        dayMinCountWeekend: null,
         dayCountMode: 'work',
         roles: parts.roles,
         levelLabels: parts.levelLabels,
@@ -389,6 +391,7 @@
     form.elements.holidayDays.value = person.holidayDays === undefined ? 9 : person.holidayDays;
     form.elements.startLimit.value = person.startLimit || '';
     form.elements.fixedStart.checked = !!person.fixedStart;
+    form.elements.headcount.value = (person.headcount === null || person.headcount === undefined) ? '' : person.headcount;
     form.elements.endLimit.value = person.endLimit || '';
     form.elements.canOpen.checked = person.canOpen !== false;
     form.elements.canClose.checked = person.canClose !== false;
@@ -443,6 +446,7 @@
       holidayDays: Math.max(0, Number(form.elements.holidayDays.value) || 0),
       startLimit: form.elements.startLimit.value,
       fixedStart: form.elements.fixedStart.checked,
+      headcount: form.elements.headcount.value === '' ? null : Math.max(0, Number(form.elements.headcount.value) || 0),
       endLimit: form.elements.endLimit.value,
       canOpen: form.elements.canOpen.checked,
       canClose: form.elements.canClose.checked,
@@ -546,6 +550,10 @@
     form.elements.periodEnd.value = data.store.periodEnd || '';
     form.elements.dayCountMode.value = data.store.dayCountMode || 'work';
     form.elements.useHolidays.checked = data.store.useHolidays !== false;
+    form.elements.dayMinCount.value = data.store.dayMinCount === null || data.store.dayMinCount === undefined
+      ? '' : data.store.dayMinCount;
+    form.elements.dayMinCountWeekend.value = data.store.dayMinCountWeekend === null || data.store.dayMinCountWeekend === undefined
+      ? '' : data.store.dayMinCountWeekend;
 
     const box = $('#store-closed-weekdays');
     box.textContent = '';
@@ -735,7 +743,9 @@
         const input = el('input', Object.assign({ type: type, value: slot[name] === null || slot[name] === undefined ? '' : slot[name] }, attrs || {}));
         input.addEventListener('input', function () {
           if (type === 'number') {
-            slot[name] = name === 'requiredWeekend' ? toIntOrNull(input.value) : Math.max(0, Number(input.value) || 0);
+            slot[name] = name === 'requiredWeekend'
+              ? (input.value === '' ? null : Math.max(0, Number(input.value) || 0))
+              : Math.max(0, Number(input.value) || 0);
           } else {
             slot[name] = input.value;
           }
@@ -871,11 +881,13 @@
       + result.store.periodStart + ' 〜 ' + result.store.periodEnd;
 
     const assignedDays = result.staffSummary.reduce(function (n, r) { return n + r.assignedDays; }, 0);
+    const fc = S.formatCount;
     [
       ['営業日数', st.openDays + '日', '(定休 ' + st.closedDays + '日)'],
-      ['必要のべ人数', st.requiredTotal + '人', ''],
-      ['割り当て', st.assignedTotal + '人', st.shortage > 0 ? '(不足 ' + st.shortage + '人)' : '(不足なし)'],
-      ['充足率', Math.round(st.fillRate * 100) + '%', ''],
+      ['必要カウント', fc(st.requiredTotal), ''],
+      ['割り当て', fc(st.assignedTotal), st.shortage > 0 ? '(不足 ' + fc(st.shortage) + ')' : '(不足なし)'],
+      ['のべ人数', st.assignedPeople + '人', ''],
+      ['充足率', Math.round(Math.min(1, st.fillRate) * 100) + '%', ''],
       ['出勤日数の合計', assignedDays + '日', '/ 目標 ' + st.targetTotal + '日'],
     ].forEach(function (row) {
       $('#result-stats').appendChild(el('li', {}, [row[0] + ' ', el('b', { text: row[1] }), ' ' + row[2]]));
@@ -888,7 +900,8 @@
 
   function renderWarnings(box, result) {
     const groups = {
-      shortage: { title: '人数が足りない枠', cls: 'notice-error', items: [] },
+      dayShortage: { title: '1日の合計カウントが足りない日', cls: 'notice-error', items: [] },
+      shortage: { title: '人数・カウントが足りない枠', cls: 'notice-error', items: [] },
       close: { title: '締め作業の担当がいない枠', cls: 'notice-error', items: [] },
       open: { title: '開店準備の担当がいない枠', cls: 'notice-warn', items: [] },
       leader: { title: 'リーダー要件を満たせない枠', cls: 'notice-warn', items: [] },
@@ -933,6 +946,10 @@
         row.date.slice(5).replace('-', '/') + ' ',
         el('span', { class: row.holidayName ? 'sun' : weekendClass, text: '(' + row.weekdayLabel + ')' }),
         row.holidayName ? el('small', { class: 'holiday-name', text: ' ' + row.holidayName }) : null,
+        row.dayRequired > 0 ? el('small', {
+          class: 'day-count' + (row.dayShort > 0 ? ' diff-minus' : ''),
+          text: S.formatCount(row.assignedCount) + '/' + S.formatCount(row.dayRequired),
+        }) : null,
       ]));
       if (row.closed) {
         tr.appendChild(el('td', { class: 'closed', colspan: String(Math.max(1, slots.length)), text: '定休日' }));
@@ -954,12 +971,18 @@
             isCloser ? el('span', { class: 'duty-mark', text: '締', title: '締め作業' }) : null,
             isOpener ? el('span', { class: 'duty-mark', text: '開', title: '開店準備' }) : null,
             a.shortened ? el('small', { class: 'short-time', text: ' ' + a.start + '〜' + a.end }) : null,
+            a.count !== 1 ? el('small', { class: 'count-mark', text: ' ' + S.formatCount(a.count) }) : null,
             el('small', { text: ' Lv' + a.level }),
           ]);
         }));
         const td = el('td', {}, ul);
+        td.appendChild(el('div', { class: 'cell-count' },
+          S.formatCount(cell.assignedCount) + ' / ' + S.formatCount(cell.required) + ' カウント'));
         if (cell.unfilled.length) {
-          td.appendChild(el('div', {}, el('span', { class: 'shortage', text: '不足 ' + cell.unfilled.length + '人' })));
+          td.appendChild(el('div', {}, el('span', { class: 'shortage', text: '役割 ' + cell.unfilled.length + '人不足' })));
+        }
+        if (cell.shortCount > 0) {
+          td.appendChild(el('div', {}, el('span', { class: 'shortage', text: S.formatCount(cell.shortCount) + 'カウント不足' })));
         }
         if (cell.noLeader) {
           td.appendChild(el('div', {}, el('span', { class: 'shortage', text: 'リーダー不在' })));
@@ -1068,7 +1091,13 @@
     function onStoreFieldChange(e) {
       const name = e.target.name;
       if (!name) return;
-      data.store[name] = e.target.type === 'checkbox' ? e.target.checked : e.target.value;
+      if (e.target.type === 'checkbox') {
+        data.store[name] = e.target.checked;
+      } else if (name === 'dayMinCount' || name === 'dayMinCountWeekend') {
+        data.store[name] = e.target.value === '' ? null : Math.max(0, Number(e.target.value) || 0);
+      } else {
+        data.store[name] = e.target.value;
+      }
       save();
       if (name === 'dayCountMode' || name === 'periodStart' || name === 'periodEnd') {
         syncDayCountFields();

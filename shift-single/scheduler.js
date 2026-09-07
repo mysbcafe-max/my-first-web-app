@@ -36,12 +36,15 @@
   const PRESETS = {
     aushop: {
       // 営業 10:00〜19:00。前後30分が開店準備・締め作業の時間
+      // 1日の合計は 平日4.5・土日祝5 カウント(通常1・時短0.5)
       label: 'au ショップ / 携帯ショップ',
       roles: ['フロア', 'カウンター', '事務'],
       levelLabels: ['研修中', '一人立ち', '一通り対応可', 'リーダー', '店長代行'],
+      dayMinCount: 4.5,
+      dayMinCountWeekend: 5,
       slots: [
-        { name: 'C(早番)', start: '09:30', end: '18:30', required: 3, requiredWeekend: 4, byRole: [1, 2, 0], leaderLevel: 4, requiresOpen: true },
-        { name: 'B(遅番)', start: '10:30', end: '19:30', required: 3, requiredWeekend: 4, byRole: [1, 2, 0], leaderLevel: 3, requiresClose: true },
+        { name: 'C(早番)', start: '09:30', end: '18:30', required: 2, requiredWeekend: 2, byRole: [1, 1, 0], leaderLevel: 4, requiresOpen: true },
+        { name: 'B(遅番)', start: '10:30', end: '19:30', required: 2, requiredWeekend: 2, byRole: [1, 1, 0], leaderLevel: 3, requiresClose: true },
       ],
     },
     restaurant: {
@@ -187,6 +190,12 @@
 
   // ---------------- 小物 ----------------
 
+  function toNum(v, def) {
+    if (v === '' || v === null || v === undefined) return def;
+    const n = Number(v);
+    return Number.isFinite(n) ? n : def;
+  }
+
   function toInt(v, def) {
     if (v === '' || v === null || v === undefined) return def;
     const n = Number(v);
@@ -241,7 +250,7 @@
 
   function normalizeSlot(raw, i, roles) {
     const src = raw || {};
-    const required = Math.max(0, toInt(src.required, 0));
+    const required = Math.max(0, toNum(src.required, 0));
     const rw = src.requiredWeekend;
     const requiredByRole = {};
     roles.forEach((role) => {
@@ -254,7 +263,7 @@
       end: String(src.end || ''),
       required: required,
       // 土日の必要人数(未入力なら平日と同じ)
-      requiredWeekend: rw === '' || rw === null || rw === undefined ? null : Math.max(0, toInt(rw, required)),
+      requiredWeekend: rw === '' || rw === null || rw === undefined ? null : Math.max(0, toNum(rw, required)),
       requiredByRole: requiredByRole,
       leaderLevel: clamp(toInt(src.leaderLevel, 0), 0, 5),
       // 開店準備・締め作業をこの枠で行うか(行うなら担当できる人を必ず1人入れる)
@@ -273,6 +282,11 @@
       periodEnd: String(src.periodEnd || ''),
       closedWeekdays: normalizeWeekdays(src.closedWeekdays, []),
       closedDates: normalizeDates(src.closedDates),
+      // 1日の合計カウントの下限(空なら使わない)
+      dayMinCount: (src.dayMinCount === '' || src.dayMinCount === null || src.dayMinCount === undefined)
+        ? null : Math.max(0, toNum(src.dayMinCount, 0)),
+      dayMinCountWeekend: (src.dayMinCountWeekend === '' || src.dayMinCountWeekend === null || src.dayMinCountWeekend === undefined)
+        ? null : Math.max(0, toNum(src.dayMinCountWeekend, 0)),
       // 祝日を土日と同じ「多めに配置する日」として扱うか
       useHolidays: src.useHolidays === undefined ? true : !!src.useHolidays,
       // 土日祝のほかに、多めに配置したい日(セール日など)
@@ -305,6 +319,9 @@
         endLimit: isValidTime(s.endLimit) ? String(s.endLimit) : '',
         // 出勤時刻を固定する(その時刻に始まる枠にだけ入れる)
         fixedStart: !!s.fixedStart,
+        // 人数カウント。null なら自動(枠より短い勤務=時短 は 0.5、それ以外は 1)
+        headcount: (s.headcount === '' || s.headcount === null || s.headcount === undefined)
+          ? null : Math.max(0, Number(s.headcount) || 0),
         canOpen: s.canOpen === undefined ? true : !!s.canOpen,    // 開店準備ができる
         canClose: s.canClose === undefined ? true : !!s.canClose, // 締め作業ができる
         // 日数の基準: '' なら店舗の既定、'work' なら出勤日数、'holiday' なら公休日数
@@ -338,14 +355,33 @@
     return !!(store.useHolidays && holidayNameOf(date));
   }
 
+  // 小数の誤差を避けて 0.1 単位に丸める
+  function round1(n) {
+    return Math.round(n * 10) / 10;
+  }
+
+  // 3 → '3'、4.5 → '4.5'
+  function formatCount(n) {
+    const v = round1(n);
+    return Number.isInteger(v) ? String(v) : v.toFixed(1);
+  }
+
   function roleSum(slot) {
     return Object.keys(slot.requiredByRole).reduce((n, k) => n + slot.requiredByRole[k], 0);
   }
 
+  // その日の店舗全体で必要な合計カウント(設定していなければ 0 = 使わない)
+  function requiredDayCount(store, date) {
+    const busy = isBusyDay(store, date);
+    const value = busy && store.dayMinCountWeekend !== null ? store.dayMinCountWeekend : store.dayMinCount;
+    return value === null ? 0 : round1(value);
+  }
+
+  // その日に必要なカウント(通常スタッフ1・時短0.5 で数えた合計の下限)
   function requiredOf(slot, date, store) {
     const busy = store ? isBusyDay(store, date) : isWeekend(date);
     const base = busy && slot.requiredWeekend !== null ? slot.requiredWeekend : slot.required;
-    return Math.max(base, roleSum(slot));
+    return round1(Math.max(0, base));
   }
 
   function csvEscape(v) {
@@ -397,11 +433,12 @@
     // 設定の穴を先に知らせる
     slots.forEach((slot) => {
       const sum = roleSum(slot);
-      if (slot.required < sum) {
+      if (sum > 0 && slot.required < sum) {
         setupWarnings.push({
           type: 'setup',
-          message: '「' + slot.name + '」は必要人数(' + slot.required + '人)が役割ごとの必須人数の合計('
-            + sum + '人)より少ないため、' + sum + '人として扱います。',
+          message: '「' + slot.name + '」は必要カウント(' + formatCount(slot.required)
+            + ')に対して役割ごとの必須人数が ' + sum + '人あります。役割の必須人数は実人数なので、'
+            + '必要カウントより多くの人が入ることがあります。',
         });
       }
     });
@@ -488,6 +525,9 @@
           required: requiredOf(slot, date, store),
           assigned: [],
           unfilled: [],
+          assignedCount: 0,
+          shortCount: 0,
+          shortReasons: {},
           noLeader: false,
           noCloser: false,
           noOpener: false,
@@ -500,6 +540,9 @@
         holidayName: store.useHolidays ? holidayNameOf(date) : '',
         busy: isBusyDay(store, date),
         closed: closed,
+        dayRequired: 0,
+        assignedCount: 0,
+        dayShort: 0,
         cells: cells,
       };
     });
@@ -624,6 +667,16 @@
       return sc;
     }
 
+    /*
+     * 残りカウントに収まる人を優先して選ぶ。
+     * 例) あと 0.5 必要なら、通常スタッフ(1)より時短スタッフ(0.5)を先に見る。
+     * これをしないと毎日 0.5 ずつ余分に人を使い、月末に人が足りなくなる。
+     */
+    function pickForGap(cands, cell, date, gap) {
+      const fits = cands.filter((c) => headcountOf(c, cell.slot) <= gap + 0.001);
+      return pickBest(fits.length ? fits : cands, cell, date);
+    }
+
     function pickBest(cands, cell, date) {
       let best = null;
       let bestScore = -Infinity;
@@ -637,10 +690,26 @@
       return best;
     }
 
+    // そのスタッフがその枠で何カウントになるか
+    function headcountOf(s, slot) {
+      if (s.headcount !== null) return s.headcount;
+      const span = effectiveSpan(s, slot);
+      return (span && span.shortened) ? 0.5 : 1;
+    }
+
+    function countOf(cell) {
+      return round1(cell.assigned.reduce((n, a) => n + a.count, 0));
+    }
+
+    function dayCountOf(day) {
+      return round1(day.cells.reduce((n, c) => n + countOf(c), 0));
+    }
+
     function assign(s, cell, date, role, isLeader) {
       const st = state[s.id];
       const span = effectiveSpan(s, cell.slot) || {};
       cell.assigned.push({
+        count: headcountOf(s, cell.slot),
         id: s.id, name: s.name, level: s.level, role: role,
         roleLabel: roleLabel(role), isLeader: !!isLeader,
         start: span.startLabel || cell.slot.start,
@@ -670,11 +739,11 @@
     // 枠を埋める
     function fillCell(cell, date) {
       const slot = cell.slot;
+      // 役割ごとの必須人数は「実人数」で確保する
       const demands = [];
       roles.forEach((role) => {
         for (let i = 0; i < (slot.requiredByRole[role.id] || 0); i += 1) demands.push(role.id);
       });
-      while (demands.length < cell.required) demands.push(ANY_ROLE);
 
       // 候補が少ない役割から埋める(あとから埋まらなくなるのを防ぐ)
       const scarcity = {};
@@ -685,7 +754,7 @@
 
       /*
        * 先に「必ず満たしたい条件」を1人ずつ埋める。
-       * 条件を満たす人は、担当できる中でいちばん候補が少ない役割に入れる。
+       * 役割の必須枠から埋め、空きがなければフリー枠として入れる。
        * すでに条件を満たす人が入っていれば、追加では取らない。
        */
       function placeRequirement(filter, mark) {
@@ -698,7 +767,10 @@
           demands.splice(i, 1);
           return true;
         }
-        return false;
+        const free = candidatesFor(cell, date, ANY_ROLE, null).filter(filter);
+        if (!free.length) return false;
+        assign(pickBest(free, cell, date), cell, date, ANY_ROLE, mark === 'leader');
+        return true;
       }
 
       // リーダー要件
@@ -716,6 +788,7 @@
         if (!placeRequirement((s) => canOpenFor(s, slot), 'open')) cell.noOpener = true;
       }
 
+      // 役割ごとの必須人数
       demands.forEach((role) => {
         const tally = {};
         const cands = candidatesFor(cell, date, role, tally);
@@ -726,6 +799,22 @@
         const best = pickBest(cands, cell, date);
         assign(best, cell, date, role, false);
       });
+
+      // カウント合計が必要量に届くまでフリー枠で足す
+      // (通常スタッフ 1・時短スタッフ 0.5 で数える)
+      let guard = 0;
+      while (countOf(cell) < cell.required - 0.001 && guard < 60) {
+        const tally = {};
+        const cands = candidatesFor(cell, date, ANY_ROLE, tally);
+        if (!cands.length) {
+          cell.shortReasons = tally;
+          break;
+        }
+        assign(pickForGap(cands, cell, date, cell.required - countOf(cell)), cell, date, ANY_ROLE, false);
+        guard += 1;
+      }
+      cell.assignedCount = countOf(cell);
+      cell.shortCount = Math.max(0, round1(cell.required - cell.assignedCount));
     }
 
     // 同じ日の枠どうしで入れ替えて、人数不足を減らす
@@ -872,6 +961,34 @@
       });
       cells.forEach((cell) => fillCell(cell, day.date));
       improveDay(day);
+
+      // 枠ごとの人数を満たしたうえで、1日の合計カウントが足りなければ足す
+      day.dayRequired = requiredDayCount(store, day.date);
+      if (day.dayRequired > 0) {
+        let guard = 0;
+        while (dayCountOf(day) < day.dayRequired - 0.001 && guard < 60) {
+          // 人が少ない枠から順に足していく
+          const targets = day.cells.slice().sort((a, b) => (countOf(a) - countOf(b))
+            || (a.slot.id < b.slot.id ? -1 : 1));
+          let placed = false;
+          const gap = day.dayRequired - dayCountOf(day);
+          for (let i = 0; i < targets.length && !placed; i += 1) {
+            const cands = candidatesFor(targets[i], day.date, ANY_ROLE, null);
+            if (!cands.length) continue;
+            assign(pickForGap(cands, targets[i], day.date, gap), targets[i], day.date, ANY_ROLE, false);
+            placed = true;
+          }
+          if (!placed) break;
+          guard += 1;
+        }
+      }
+
+      day.cells.forEach((cell) => {
+        cell.assignedCount = countOf(cell);
+        cell.shortCount = Math.max(0, round1(cell.required - cell.assignedCount));
+      });
+      day.assignedCount = dayCountOf(day);
+      day.dayShort = Math.max(0, round1(day.dayRequired - day.assignedCount));
       // この日に入れたのに入らなかった人は、残りの機会が 1 つ減ったとみなす
       staff.forEach((s) => {
         if (!state[s.id].dates.has(day.date) && couldWorkDay(s, day)) state[s.id].passed += 1;
@@ -883,17 +1000,26 @@
     const warnings = setupWarnings.slice();
 
     days.forEach((day) => {
+      if (day.dayShort > 0) {
+        warnings.push({
+          type: 'dayShortage',
+          date: day.date,
+          message: day.date + '(' + day.weekdayLabel + ')' + (day.holidayName ? ' ' + day.holidayName : '')
+            + ': 1日の合計が ' + formatCount(day.assignedCount) + ' / '
+            + formatCount(day.dayRequired) + 'カウント(' + formatCount(day.dayShort) + '不足)',
+        });
+      }
       day.cells.forEach((cell) => {
-        if (cell.unfilled.length) {
+        if (cell.unfilled.length || cell.shortCount > 0) {
           const byRole = {};
-          const reasons = {};
+          const reasons = Object.assign({}, cell.shortReasons || {});
           cell.unfilled.forEach((u) => {
             byRole[u.role] = (byRole[u.role] || 0) + 1;
             Object.keys(u.reasons).forEach((k) => { reasons[k] = Math.max(reasons[k] || 0, u.reasons[k]); });
           });
-          const roleText = Object.keys(byRole)
-            .map((r) => (r === ANY_ROLE ? '' : roleLabel(r)) + byRole[r] + '人')
-            .join('、');
+          const parts = Object.keys(byRole)
+            .map((r) => (r === ANY_ROLE ? '' : roleLabel(r)) + byRole[r] + '人');
+          if (cell.shortCount > 0) parts.push(formatCount(cell.shortCount) + 'カウント');
           const reasonText = Object.keys(reasons)
             .sort((a, b) => reasons[b] - reasons[a])
             .slice(0, 3)
@@ -904,7 +1030,9 @@
             date: day.date,
             slotName: cell.slot.name,
             count: cell.unfilled.length,
-            message: day.date + '(' + day.weekdayLabel + ')' + cell.slot.name + ': ' + roleText + '不足'
+            shortCount: cell.shortCount,
+            message: day.date + '(' + day.weekdayLabel + ')' + cell.slot.name + ': ' + parts.join('、') + '不足'
+              + '(' + formatCount(cell.assignedCount) + '/' + formatCount(cell.required) + 'カウント)'
               + (reasonText ? '(入れなかった理由: ' + reasonText + ')' : ''),
           });
         }
@@ -985,8 +1113,13 @@
       }
     });
 
-    const requiredTotal = days.reduce((n, d) => n + d.cells.reduce((m, c) => m + c.required, 0), 0);
-    const assignedTotal = days.reduce((n, d) => n + d.cells.reduce((m, c) => m + c.assigned.length, 0), 0);
+    // その日の必要量は「枠ごとの合計」と「1日の下限」の大きいほう
+    const requiredTotal = round1(days.reduce((n, d) => {
+      const slotSum = d.cells.reduce((m, c) => m + c.required, 0);
+      return n + Math.max(slotSum, d.dayRequired || 0);
+    }, 0));
+    const assignedTotal = round1(days.reduce((n, d) => n + d.cells.reduce((m, c) => m + c.assignedCount, 0), 0));
+    const assignedPeople = days.reduce((n, d) => n + d.cells.reduce((m, c) => m + c.assigned.length, 0), 0);
 
     return {
       ok: true,
@@ -1002,9 +1135,11 @@
         closedDays: days.length - openDays.length,
         requiredTotal: requiredTotal,
         assignedTotal: assignedTotal,
-        shortage: requiredTotal - assignedTotal,
+        assignedPeople: assignedPeople,
+        shortage: round1(Math.max(0, requiredTotal - assignedTotal)),
         fillRate: requiredTotal ? assignedTotal / requiredTotal : 1,
         targetTotal: staff.reduce((n, s) => n + s.targetDays, 0),
+        dayShortDays: days.filter((d) => d.dayShort > 0).length,
       },
     };
   }
@@ -1025,6 +1160,7 @@
           if (cell.slot.requiresClose && a.canClose && a.coversClose) notes.push('締め');
           if (cell.slot.requiresOpen && a.canOpen && a.coversOpen) notes.push('開店');
           if (a.shortened) notes.push('時短');
+          notes.push(formatCount(a.count) + 'カウント');
           rows.push([day.date, day.weekdayLabel, day.holidayName, cell.slot.name, a.start, a.end,
             a.roleLabel, a.name, a.level, notes.join('・')]);
         });
@@ -1032,6 +1168,10 @@
           rows.push([day.date, day.weekdayLabel, day.holidayName, cell.slot.name, cell.slot.start, cell.slot.end,
             u.roleLabel, '(不足)', '', '']);
         });
+        if (cell.shortCount > 0) {
+          rows.push([day.date, day.weekdayLabel, day.holidayName, cell.slot.name, cell.slot.start, cell.slot.end,
+            '', '(カウント不足)', '', formatCount(cell.assignedCount) + '/' + formatCount(cell.required)]);
+        }
       });
     });
     return rows.map((r) => r.map(csvEscape).join(',')).join('\n');
@@ -1070,6 +1210,9 @@
       weekday: day.weekday,
       holidayName: day.holidayName,
       busy: day.busy,
+      dayRequired: day.dayRequired,
+      assignedCount: day.assignedCount,
+      dayShort: day.dayShort,
       closed: day.closed,
       cells: (result.slots || []).map((slot) => {
         const cell = day.cells.find((c) => c.slot.id === slot.id);
@@ -1101,7 +1244,13 @@
         weekdays: [0, 1, 2, 3, 4, 5, 6],
       };
     });
-    return { roles: roles, levelLabels: preset.levelLabels.slice(), slots: slots };
+    return {
+      roles: roles,
+      levelLabels: preset.levelLabels.slice(),
+      slots: slots,
+      dayMinCount: preset.dayMinCount === undefined ? null : preset.dayMinCount,
+      dayMinCountWeekend: preset.dayMinCountWeekend === undefined ? null : preset.dayMinCountWeekend,
+    };
   }
 
   // プリセットごとのサンプル要員
@@ -1109,18 +1258,16 @@
   //  対応できる時間帯(index、省略で全部), 追加設定(時短・締め可否・公休日数 など)]
   const SAMPLE_STAFF = {
     aushop: [
-      ['佐藤 店長', 5, [0, 1, 2], 20, null, null, { dayCountMode: 'holiday', holidayDays: 9 }],
-      ['鈴木 副店長', 4, [0, 1, 2], 20, null, null, { dayCountMode: 'holiday', holidayDays: 9 }],
-      ['高橋 (カウンター)', 4, [0, 1, 2], 20, null, null, { dayCountMode: 'holiday', holidayDays: 10 }],
-      ['田中 (カウンター)', 3, [0, 1], 20, null, null, { dayCountMode: 'holiday', holidayDays: 10 }],
-      ['伊藤 (カウンター)', 3, [1], 18, null, [1]],
+      ['佐藤 店長', 5, [0, 1, 2], 0, null, null, { dayCountMode: 'holiday', holidayDays: 9 }],
+      ['鈴木 副店長', 4, [0, 1, 2], 0, null, null, { dayCountMode: 'holiday', holidayDays: 9 }],
+      ['高橋 (カウンター)', 4, [0, 1, 2], 0, null, null, { dayCountMode: 'holiday', holidayDays: 10 }],
+      ['田中 (カウンター)', 3, [0, 1], 0, null, null, { dayCountMode: 'holiday', holidayDays: 10 }],
+      ['伊藤 (カウンター)', 3, [1], 16, null, [1]],
       ['木村 (時短・カウンター)', 3, [0, 1], 18, null, null,
         { startLimit: '09:30', fixedStart: true, endLimit: '16:00', canClose: false }],
-      ['渡辺 (フロア)', 2, [0], 18],
-      ['山本 (フロア)', 2, [0, 2], 16],
-      ['中村 (事務)', 3, [0, 2], 14, [1, 2, 3, 4, 5], [0]],
+      ['渡辺 (フロア)', 2, [0], 14],
+      ['中村 (事務)', 3, [0, 2], 12, [1, 2, 3, 4, 5], [0]],
       ['小林 (学生)', 1, [0], 8, [0, 6], null, { canClose: false }],
-      ['加藤 (新人)', 1, [0], 14, null, null, { canClose: false }],
     ],
     restaurant: [
       ['佐藤 店長', 5, [0, 1], 20],
@@ -1168,6 +1315,8 @@
       closedDates: [],
       roles: parts.roles,
       levelLabels: parts.levelLabels,
+      dayMinCount: parts.dayMinCount,
+      dayMinCountWeekend: parts.dayMinCountWeekend,
       slots: parts.slots,
     };
     const staff = (SAMPLE_STAFF[key] || []).map((row, i) => Object.assign({
@@ -1210,6 +1359,7 @@
     effectiveSpan: effectiveSpan,
     isValidTime: isValidTime,
     holidayNameOf: holidayNameOf,
+    formatCount: formatCount,
     weekdayOf: weekdayOf,
     isValidDate: isValidDate,
   };
