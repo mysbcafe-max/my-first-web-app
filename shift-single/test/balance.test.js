@@ -99,7 +99,8 @@ test('見積もりと実際の生成結果が食い違わない', () => {
   const b = S.estimateBalance(d.store, d.staff);
   const r = S.generate({ store: d.store, staff: d.staff });
   // 自動調整で必要量が下がるので、見積もりは調整前の必要量と一致する
-  assert.strictEqual(b.requiredCount, 144.5);
+  // 平日4 × 21日 + 土日祝5 × 10日 = 134
+  assert.strictEqual(b.requiredCount, 134);
   assert.ok(r.stats.requiredTotal <= b.requiredCount, '調整後の必要量が見積もりを超えている');
   // 登録した勤務日数の合計は生成結果の目標と一致する
   const targetTotal = r.staffSummary.reduce((n, x) => n + x.targetDays, 0);

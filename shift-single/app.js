@@ -9,6 +9,7 @@
   const S = window.SingleShiftScheduler;
   const STORAGE_KEY = 'shift-single/v2';
   const LEGACY_KEY = 'shift-single/v1';
+  const MIGRATION_KEY = 'shift-single/migrations';
   const BACKUP_KEY = 'shift-single/last-backup';
   const BACKUP_REMIND_DAYS = 7;
   const WEEKDAYS = S.WEEKDAY_LABELS;
@@ -127,6 +128,48 @@
     return { store: store, staff: staff, options: parsed.options || {} };
   }
 
+  // 保存済みの設定を新しい既定に合わせる。1つにつき一度だけ実行する
+  // (店舗があとから設定し直した値を、読み込みのたびに戻してしまわないため)
+  const MIGRATIONS = [
+    {
+      // 2026-09: au ショップの平日の下限を 4.5 → 4 に変更。
+      // 既定のまま使っている店舗だけ書き換え、自分で決めた値は触らない
+      id: 'daymin-weekday-4',
+      apply: function (store) {
+        if (store.dayMinCount !== 4.5) return false;
+        store.dayMinCount = 4;
+        return true;
+      },
+    },
+  ];
+
+  function doneMigrations() {
+    try {
+      const raw = localStorage.getItem(MIGRATION_KEY);
+      const list = raw ? JSON.parse(raw) : [];
+      return Array.isArray(list) ? list : [];
+    } catch (e) {
+      return [];
+    }
+  }
+
+  // 戻り値: 保存し直す必要があるか
+  function applyMigrations(store) {
+    const done = doneMigrations();
+    let changed = false;
+    MIGRATIONS.forEach(function (m) {
+      if (done.indexOf(m.id) !== -1) return;
+      if (store && m.apply(store)) changed = true;
+      done.push(m.id);
+    });
+    try {
+      localStorage.setItem(MIGRATION_KEY, JSON.stringify(done));
+    } catch (e) {
+      // 保存できなくても動作には影響しない(次回また試みるだけ)
+    }
+    return changed;
+  }
+
   function loadData() {
     try {
       let raw = localStorage.getItem(STORAGE_KEY);
@@ -137,11 +180,13 @@
         parsed = migrateV1(JSON.parse(legacy));
       }
       const base = defaultData();
-      return {
+      const loaded = {
         store: Object.assign(base.store, parsed.store || {}),
         staff: Array.isArray(parsed.staff) ? parsed.staff : [],
         options: Object.assign(base.options, parsed.options || {}),
       };
+      migrated = applyMigrations(loaded.store);
+      return loaded;
     } catch (e) {
       return defaultData();
     }
@@ -155,7 +200,9 @@
     }
   }
 
+  let migrated = false;
   let data = loadData();
+  if (migrated) save();
   let lastResult = null;
   let editingDaysOff = [];
   let backupNoticeDismissed = false;

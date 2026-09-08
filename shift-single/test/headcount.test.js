@@ -205,9 +205,9 @@ test('カウントの表示は整数なら小数点を出さない', () => {
   assert.strictEqual(S.formatCount(5.0), '5');
 });
 
-test('au ショップのサンプルは平日4.5・土日祝5で組まれる', () => {
+test('au ショップのサンプルは平日4・土日祝5で組まれる', () => {
   const d = S.sampleData('aushop', '2026-10-05');
-  assert.strictEqual(d.store.dayMinCount, 4.5);
+  assert.strictEqual(d.store.dayMinCount, 4);
   assert.strictEqual(d.store.dayMinCountWeekend, 5);
   const r = S.generate({ store: d.store, staff: d.staff });
   const met = r.days.filter((day) => day.assignedCount >= day.dayRequired).length;
@@ -215,6 +215,17 @@ test('au ショップのサンプルは平日4.5・土日祝5で組まれる', (
   // 時短スタッフが 0.5 として数えられている
   const hasHalf = r.days.some((day) => day.cells.some((c) => c.assigned.some((a) => a.count === 0.5)));
   assert.ok(hasHalf, '時短スタッフが 0.5 カウントになっていない');
+});
+
+test('au ショップのひな形は平日4・土日祝5の下限になる', () => {
+  const parts = S.presetToStore('aushop');
+  assert.strictEqual(parts.dayMinCount, 4);
+  assert.strictEqual(parts.dayMinCountWeekend, 5);
+  const d = S.sampleData('aushop', '2026-10-05');
+  const r = S.generate({ store: Object.assign({}, d.store, { autoRelax: false }), staff: d.staff });
+  r.days.filter((day) => !day.closed).forEach((day) => {
+    assert.strictEqual(day.dayRequired, day.busy ? 5 : 4, day.date);
+  });
 });
 
 // ---------------- 人手が足りないときの自動調整 ----------------
