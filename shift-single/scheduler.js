@@ -36,11 +36,11 @@
   const PRESETS = {
     aushop: {
       // 営業 10:00〜19:00。前後30分が開店準備・締め作業の時間
-      // 1日の合計は 平日4.5・土日祝5 カウント(通常1・時短0.5)
+      // 1日の合計は 平日4・土日祝5 カウント(通常1・時短0.5)
       label: 'au ショップ / 携帯ショップ',
       roles: ['フロア', 'カウンター', '事務'],
       levelLabels: ['研修中', '一人立ち', '一通り対応可', 'リーダー', '店長代行'],
-      dayMinCount: 4.5,
+      dayMinCount: 4,
       dayMinCountWeekend: 5,
       slots: [
         { name: 'C(早番)', start: '09:30', end: '18:30', required: 2, requiredWeekend: 2, byRole: [1, 1, 0], leaderLevel: 4, requiresOpen: true },
@@ -1696,7 +1696,7 @@
       ['伊藤 (カウンター)', 3, [1], 16, null, [1]],
       ['木村 (時短・カウンター)', 3, [0, 1], 18, null, null,
         { startLimit: '09:30', fixedStart: true, endLimit: '16:00', canClose: false }],
-      ['渡辺 (フロア)', 2, [0], 14],
+      ['渡辺 (フロア)', 2, [0], 12],
       ['中村 (事務)', 3, [0, 2], 12, [1, 2, 3, 4, 5], [0]],
       ['小林 (学生)', 1, [0], 8, [0, 6], null, { canClose: false }],
     ],
